@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+pandas
+datasets
+transformers
+torch
+scikit-learn
+sentence-transformers
