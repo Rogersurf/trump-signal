@@ -1,14 +1,13 @@
 fastapi
 uvicorn
 pandas
+numpy
 datasets
 transformers
 torch
 scikit-learn
 sentence-transformers
-fastapi
-uvicorn
 streamlit
-pandas
 requests
+plotly
 matplotlib
