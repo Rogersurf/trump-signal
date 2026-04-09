@@ -15,9 +15,9 @@ COPY . .
 # This runs during image build so the container starts with data ready
 RUN python -c "from app.utils import ensure_database; ensure_database()"
 
-# Expose ports for FastAPI (8000) and Streamlit (8501)
-EXPOSE 8000 8501
+# Expose ports for FastAPI (8000) and Streamlit (7860)
+EXPOSE 8000 7860
 
 # Start both services in parallel
 CMD uvicorn app.api.main:app --host 0.0.0.0 --port 8000 & \
-    streamlit run frontend/streamlitapp.py --server.port 8501 --server.address 0.0.0.0
+    streamlit run frontend/streamlitapp.py --server.port 7860 --server.address 0.0.0.0
