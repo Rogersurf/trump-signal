@@ -20,4 +20,4 @@ EXPOSE 8000 8501
 
 # Start both services in parallel
 CMD uvicorn app.api.main:app --host 0.0.0.0 --port 8000 & \
-    streamlit run frontend/streamlit_app.py --server.port 8501 --server.address 0.0.0.0
+    streamlit run frontend/streamlitapp.py --server.port 8501 --server.address 0.0.0.0
