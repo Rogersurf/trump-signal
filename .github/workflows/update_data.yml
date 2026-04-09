@@ -1,0 +1,43 @@
+name: Weekly Data Update
+
+on:
+  schedule:
+    # Runs every Monday at 03:00 UTC
+    - cron: '0 3 * * 1'
+  workflow_dispatch:  # Allows manual trigger from GitHub UI
+
+jobs:
+  update-dataset:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run data pipeline
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: python data/build_db.py
+
+      - name: Upload updated database to HF Dataset
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          python -c "
+          from huggingface_hub import HfApi
+          api = HfApi()
+          api.upload_file(
+              path_or_fileobj='data/trump_pulse.db',
+              path_in_repo='trump_pulse.db',
+              repo_id='Rogersurf/trump_pulse_data',
+              repo_type='dataset'
+          )
+          print('✅ Database uploaded to Hugging Face Dataset')
+          "
