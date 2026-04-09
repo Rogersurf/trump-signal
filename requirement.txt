@@ -6,3 +6,9 @@ transformers
 torch
 scikit-learn
 sentence-transformers
+fastapi
+uvicorn
+streamlit
+pandas
+requests
+matplotlib
