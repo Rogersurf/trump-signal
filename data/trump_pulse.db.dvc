@@ -1,0 +1,5 @@
+outs:
+- md5: 06ba22338a38dad8ce73ca7edd0214eb
+  size: 73232384
+  hash: md5
+  path: trump_pulse.db
