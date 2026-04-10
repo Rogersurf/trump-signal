@@ -11,7 +11,6 @@ streamlit
 requests
 plotly
 matplotlib
-kagglehub
 huggingface_hub
 pytest
 httpx
