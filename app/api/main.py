@@ -4,6 +4,7 @@ import sqlite3
 from datetime import datetime, timezone
 import sys
 import os
+from backend_database.embeddings import get_search_engine
 
 # Add project root to path to import from backend_database
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -37,22 +38,10 @@ def get_sentiments(limit: int = 50):
 # ---------- QA Endpoint (Real Data, Simple Keyword Search) ----------
 @app.get("/qa")
 def qa(query: str, limit: int = 5):
-    """Search posts containing the query string."""
+    """Semantic search over Trump posts with similarity scores."""
     try:
-        df = client.get_full_data()
-        results = []
-        for _, row in df.iterrows():
-            text = row.get("text", "") or row.get("content", "")
-            if query.lower() in str(text).lower():
-                results.append({
-                    "post": {
-                        "post_id": row.get("post_id"),
-                        "date": row.get("date"),
-                        "text": text[:500]
-                    }
-                })
-                if len(results) >= limit:
-                    break
+        engine = get_search_engine()
+        results = engine.search(query, top_k=limit)
         return {"query": query, "results": results}
     except Exception as e:
         return {"error": str(e)}
