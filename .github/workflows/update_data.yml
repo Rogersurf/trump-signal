@@ -1,4 +1,4 @@
-name: Weekly Data Update
+name: Trump Data Pipeline
 
 on:
   schedule:
@@ -17,29 +17,17 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install dependencies (kagglehub fix)
+      - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install --pre sigstore
-          pip install pandas datasets huggingface_hub kagglehub
+          pip install pandas datasets huggingface_hub apscheduler
 
-      - name: Run data pipeline
+      - name: Initialize database (if missing)
+        run: python backend_database/init_db.py
+
+      - name: Run daily update (one-off)
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: python data/build_db.py
+        run: python backend_database/daily_update.py --once
 
-      - name: Upload updated database to HF Dataset
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: |
-          python -c "
-          from huggingface_hub import HfApi
-          api = HfApi()
-          api.upload_file(
-              path_or_fileobj='data/trump_pulse.db',
-              path_in_repo='trump_pulse.db',
-              repo_id='Rogersurf/trump_pulse_data',
-              repo_type='dataset'
-          )
-          print('✅ Database uploaded')
-          "
+      # Upload step removed – not required for team access
