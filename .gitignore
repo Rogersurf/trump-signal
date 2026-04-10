@@ -9,4 +9,7 @@ data/raw/
 data/processed/
 artifacts/
 
-.DS_Store
+.DS_Store*.db
+*.pkl
+*.db
+*.pkl
