@@ -1,14 +1,42 @@
+# Python virtual environment (huge)
+venv/
+.venv/
+env/
+.env
+
+# Git and DVC
+.git/
+.dvc/
+*.dvc
+
+# Database files (large)
+*.db
+*.pkl
+
+# Python cache
 __pycache__/
 *.pyc
-.env
-.venv
-venv/
-.idea
-.idea/
+*.pyo
+
+# Data directories
 data/raw/
 data/processed/
 artifacts/
 
+# IDE and OS files
+.idea/
+.vscode/
 .DS_Store
-*.db
-*.pkl
+
+# Docker files (avoid recursion)
+Dockerfile
+.dockerignore
+
+# Jupyter/Colab notebooks
+*.ipynb
+
+# Streamlit
+.streamlit/
+
+# pytest
+.pytest_cache/
