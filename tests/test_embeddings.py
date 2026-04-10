@@ -1,48 +1,51 @@
-"""Unit tests for backend_database/embeddings.py"""
-import pickle
-import numpy as np
-import pytest
-from unittest.mock import patch, MagicMock
+"""Integration tests for embeddings using the real database and ChromaDB."""
+import os
 import sys
+import pytest
 
-sys.path.insert(0, "backend_database")
-from embeddings import PostSearchEngine, get_search_engine
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from backend_database.embeddings import PostSearchEngine
+from backend_database.init_db import DEFAULT_DB_PATH
 
 
-class TestPostSearchEngine:
-    @patch("embeddings.pickle.load")
-    @patch("embeddings.open")
-    @patch("embeddings.SentenceTransformer")
-    def test_search_returns_scored_results(
-        self, mock_model_class, mock_open, mock_pickle_load
-    ):
-        """Should return top_k posts with similarity scores."""
-        # Mock cached data
-        mock_posts = [
-            {"post_id": "1", "date": "2024-01-01", "text": "Hello world"},
-            {"post_id": "2", "date": "2024-01-02", "text": "Trump economy"},
-        ]
-        mock_embeddings = np.array([[0.5, 0.5], [0.2, 0.8]])
-        mock_pickle_load.return_value = {"posts": mock_posts, "embeddings": mock_embeddings}
+@pytest.fixture(scope="module")
+def real_engine():
+    """Load the real search engine. Skip if database does not exist."""
+    if not os.path.exists(DEFAULT_DB_PATH):
+        pytest.skip(f"Real database not found at {DEFAULT_DB_PATH}")
+    engine = PostSearchEngine(DEFAULT_DB_PATH)
+    # Ensure index is built (it should already exist, but just in case)
+    if engine.collection.count() == 0:
+        engine.build_index()
+    return engine
 
-        # Mock model encode for query
-        mock_model = MagicMock()
-        mock_model.encode.return_value = np.array([[0.4, 0.6]])  # query embedding
-        mock_model_class.return_value = mock_model
 
-        engine = PostSearchEngine()
-        results = engine.search("economy", top_k=2)
+def test_engine_loads_real_data(real_engine):
+    """Engine should successfully load the real ChromaDB collection."""
+    count = real_engine.collection.count()
+    assert count > 30000, f"Expected over 30000 posts, got {count}"
 
-        assert len(results) == 2
-        assert "post" in results[0]
+
+def test_search_returns_real_posts(real_engine):
+    """Search with a known keyword should return relevant real posts."""
+    results = real_engine.search("China", top_k=3)
+    assert len(results) == 3
+    for r in results:
+        assert "post" in r
+        assert "score" in r
+        assert r["score"] >= 0
+
+
+def test_search_score_is_reasonable(real_engine):
+    """Scores for highly relevant queries should be high."""
+    results = real_engine.search("China", top_k=1)
+    assert results[0]["score"] > 50, f"Expected high relevance for 'China', got {results[0]['score']}"
+
+
+def test_search_handles_empty_query(real_engine):
+    """Empty query should return results (or handle gracefully)."""
+    results = real_engine.search("", top_k=2)
+    assert isinstance(results, list)
+    if results:
         assert "score" in results[0]
-        assert isinstance(results[0]["score"], float)
-
-    def test_get_search_engine_returns_singleton(self):
-        """get_search_engine should return the same instance."""
-        with patch("embeddings.PostSearchEngine") as mock_engine_class:
-            mock_engine_class.return_value = MagicMock()
-            engine1 = get_search_engine()
-            engine2 = get_search_engine()
-            assert engine1 is engine2
-            mock_engine_class.assert_called_once()
