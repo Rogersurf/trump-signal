@@ -5,7 +5,7 @@ import sqlite3
 import pandas as pd
 import datetime
 class TrumpDataClient:
-    def __init__(self, db_path="backend_datdabase/trump_data.db"):
+    def __init__(self, db_path="backend_database/trump_data.db"):
         self.db_path = db_path
 
     def _get_conn(self):
