@@ -17,8 +17,13 @@ def build_index(db_path: str = None, force: bool = False):
         db_path: Path to the SQLite database. If None, uses the default path.
         force: If True, rebuild the index even if it already exists.
     """
+
     if db_path is None:
-        db_path = DEFAULT_DB_PATH
+        data_dir = os.environ.get("TRUMPPULSE_DATA_DIR")
+        if data_dir:
+            db_path = os.path.join(data_dir, "trump_data.db")
+        else:
+            db_path = DEFAULT_DB_PATH
 
     print(f"Using database at: {db_path}")
     engine = PostSearchEngine(db_path)

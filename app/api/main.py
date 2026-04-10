@@ -77,3 +77,15 @@ def debug_config():
         "TRUMPPULSE_DATA_DIR": os.environ.get("TRUMPPULSE_DATA_DIR", "not set"),
         "CHROMA_DB_PATH": os.environ.get("CHROMA_DB_PATH", "not set"),
     }
+
+@app.get("/debug/status")
+def debug_status():
+    import os
+    from backend_database.embeddings import get_search_engine, CHROMA_PATH
+    engine = get_search_engine()
+    return {
+        "db_path": engine.db_path,
+        "db_exists": os.path.exists(engine.db_path),
+        "chroma_path": CHROMA_PATH,
+        "chroma_count": engine.collection.count(),
+    }
