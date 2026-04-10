@@ -3,7 +3,8 @@ import pandas as pd
 from datasets import load_dataset
 import os
 
-DB_PATH = "trump_data.db"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(BASE_DIR, "trump_data.db")
 HF_REPO = "chrissoria/trump-truth-social"
 
 
