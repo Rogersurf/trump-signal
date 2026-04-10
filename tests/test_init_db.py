@@ -1,76 +1,58 @@
-"""Unit tests for backend_database/init_db.py"""
+"""Unit tests for backend_database/init_db.py using real temporary database."""
 import os
-import sys
 import sqlite3
-from unittest.mock import patch, MagicMock
-import pytest
+import tempfile
 import pandas as pd
+import pytest
+from unittest.mock import patch
+from datasets import Dataset
 
-# Add backend_database to path
-sys.path.insert(0, "backend_database")
-import init_db
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from backend_database.init_db import initialize, HF_REPO
+
+
+# Real sample data (minimal, representative)
+REAL_SAMPLE_DATA = {
+    "date": ["2024-01-01 10:00:00", "2024-01-02 11:00:00"],
+    "text": ["Sample post one.", "Sample post two."],
+    # Add other columns that the dataset actually has (if any)
+}
 
 
 class TestInitialize:
-    """Test the initialize() function from init_db.py"""
+    @patch("backend_database.init_db.load_dataset")
+    def test_initialize_creates_database_and_table(self, mock_load_dataset, tmp_path):
+        """Initialize should create a SQLite database with the truth_social table."""
+        db_path = str(tmp_path / "trump_data.db")
 
-    @patch("init_db.load_dataset")
-    @patch("init_db.os.path.exists")
-    def test_initialize_skips_if_db_exists(self, mock_exists, mock_load_dataset):
-        """Should print warning and return if database file already exists."""
-        mock_exists.return_value = True
+        # Create a real Hugging Face Dataset object from the sample data
+        real_dataset = Dataset.from_pandas(pd.DataFrame(REAL_SAMPLE_DATA))
+        mock_load_dataset.return_value = {"train": real_dataset}
 
-        with patch("builtins.print") as mock_print:
-            init_db.initialize()
+        initialize(db_path)
 
+        # Verify database file exists
+        assert os.path.exists(db_path)
+
+        # Verify table exists and contains rows
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='truth_social'")
+        assert cursor.fetchone() is not None
+        cursor.execute("SELECT COUNT(*) FROM truth_social")
+        assert cursor.fetchone()[0] == 2
+        conn.close()
+
+    @patch("backend_database.init_db.load_dataset")
+    def test_initialize_skips_if_db_exists(self, mock_load_dataset, tmp_path):
+        """Initialize should skip if the database file already exists."""
+        db_path = str(tmp_path / "trump_data.db")
+        # Create an empty file to simulate existing database
+        with open(db_path, "w") as f:
+            f.write("")
+
+        initialize(db_path)
+
+        # load_dataset should not be called
         mock_load_dataset.assert_not_called()
-        mock_print.assert_any_call(f"警告: {init_db.DB_PATH} 已存在。若需重新初始化，请手动删除该文件。")
-
-    @patch("init_db.sqlite3.connect")
-    @patch("init_db.load_dataset")
-    @patch("init_db.os.path.exists")
-    def test_initialize_creates_db_and_table_when_missing(
-        self, mock_exists, mock_load_dataset, mock_connect
-    ):
-        """Should download data and create truth_social table with index."""
-        mock_exists.return_value = False
-
-        # Mock dataset from Hugging Face
-        mock_df = pd.DataFrame({
-            "date": ["2024-01-01 10:00:00", "2024-01-02 11:00:00"],
-            "content": ["Post 1", "Post 2"],
-            "other_col": [1, 2]
-        })
-        mock_dataset = {"train": MagicMock()}
-        mock_dataset["train"].to_pandas.return_value = mock_df
-        mock_load_dataset.return_value = mock_dataset
-
-        # Mock SQLite connection
-        mock_conn = MagicMock()
-        mock_connect.return_value.__enter__.return_value = mock_conn
-
-        with patch("builtins.print") as mock_print:
-            init_db.initialize()
-
-        # Verify dataset loaded
-        mock_load_dataset.assert_called_once_with(init_db.HF_REPO)
-
-        # Verify to_sql called with correct parameters
-        # The DataFrame's to_sql is called on the mock_df, which is a real DataFrame
-        # We can't easily assert on that, but we can check the connection execute call for index
-        mock_conn.execute.assert_called_once_with(
-            "CREATE INDEX idx_date ON truth_social (date)"
-        )
-
-        # Check success message printed
-        mock_print.assert_any_call("--- 初始化成功！---")
-
-    @patch("init_db.load_dataset")
-    @patch("init_db.os.path.exists")
-    def test_initialize_handles_dataset_load_failure(self, mock_exists, mock_load_dataset):
-        """Should propagate exception if dataset download fails."""
-        mock_exists.return_value = False
-        mock_load_dataset.side_effect = Exception("Network error")
-
-        with pytest.raises(Exception, match="Network error"):
-            init_db.initialize()

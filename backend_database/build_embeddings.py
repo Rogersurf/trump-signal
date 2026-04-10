@@ -1,35 +1,35 @@
-"""Build and cache sentence embeddings for all Trump posts."""
-import sqlite3
-import pickle
+"""Build the ChromaDB vector index from the Trump posts SQLite database."""
 import os
-from sentence_transformers import SentenceTransformer
+import sys
 
-DB_PATH = "backend_database/trump_data.db"
-CACHE_PATH = "backend_database/trump_embeddings.pkl"  # ← changed name
-MODEL_NAME = "all-MiniLM-L6-v2"
+# Add the parent directory to Python path so we can import from backend_database
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-def build_embeddings():
-    print("Loading model...")
-    model = SentenceTransformer(MODEL_NAME)
+from backend_database.embeddings import PostSearchEngine
+from backend_database.init_db import DEFAULT_DB_PATH
 
-    print("Fetching posts from database...")
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT post_id, date, text FROM truth_social WHERE text IS NOT NULL")
-    rows = cursor.fetchall()
-    conn.close()
 
-    posts = [{"post_id": r[0], "date": r[1], "text": r[2]} for r in rows]
-    texts = [p["text"] for p in posts]
+def build_index(db_path: str = None, force: bool = False):
+    """
+    Build the ChromaDB vector index.
 
-    print(f"Encoding {len(texts)} posts...")
-    embeddings = model.encode(texts, show_progress_bar=True)
+    Args:
+        db_path: Path to the SQLite database. If None, uses the default path.
+        force: If True, rebuild the index even if it already exists.
+    """
+    if db_path is None:
+        db_path = DEFAULT_DB_PATH
 
-    print(f"Saving cache to {CACHE_PATH}...")
-    with open(CACHE_PATH, "wb") as f:
-        pickle.dump({"posts": posts, "embeddings": embeddings}, f)
+    print(f"Using database at: {db_path}")
+    engine = PostSearchEngine(db_path)
+    engine.build_index(force=force)
+    print("✅ ChromaDB index build process completed.")
 
-    print("✅ Embeddings built successfully.")
 
 if __name__ == "__main__":
-    build_embeddings()
+    import argparse
+    parser = argparse.ArgumentParser(description="Build ChromaDB vector index for Trump posts.")
+    parser.add_argument("--db-path", help="Path to the SQLite database file.")
+    parser.add_argument("--force", action="store_true", help="Force rebuild of the index.")
+    args = parser.parse_args()
+    build_index(args.db_path, args.force)

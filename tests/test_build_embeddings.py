@@ -1,54 +1,80 @@
-"""Unit tests for backend_database/build_embeddings.py"""
+"""Integration tests for build_embeddings using a real subset of the production database."""
 import os
-import pickle
-import pytest
-from unittest.mock import patch, MagicMock
 import sys
+import tempfile
+import sqlite3
+import shutil
+import pytest
 
-sys.path.insert(0, "backend_database")
-import build_embeddings
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from backend_database.build_embeddings import build_index
+from backend_database.init_db import DEFAULT_DB_PATH
 
 
-class TestBuildEmbeddings:
-    @patch("build_embeddings.SentenceTransformer")
-    @patch("build_embeddings.sqlite3.connect")
-    @patch("build_embeddings.pickle.dump")
-    @patch("build_embeddings.open")
-    def test_build_embeddings_creates_cache(
-        self, mock_open, mock_pickle_dump, mock_connect, mock_model_class
-    ):
-        """Should fetch posts, encode them, and save to pickle file."""
-        # Mock database rows: (post_id, date, text)
-        mock_rows = [
-            ("123", "2024-01-01", "Great post"),
-            ("456", "2024-01-02", "Another post"),
-        ]
-        mock_cursor = MagicMock()
-        mock_cursor.fetchall.return_value = mock_rows
-        mock_conn = MagicMock()
-        mock_conn.cursor.return_value = mock_cursor
-        mock_connect.return_value = mock_conn
+@pytest.fixture(scope="function")
+def real_subset_env():
+    """Create a temporary database with a subset of real posts and isolated ChromaDB."""
+    if not os.path.exists(DEFAULT_DB_PATH):
+        pytest.skip(f"Real database not found at {DEFAULT_DB_PATH}")
 
-        # Mock SentenceTransformer
-        mock_model = MagicMock()
-        mock_model.encode.return_value = [[0.1, 0.2], [0.3, 0.4]]
-        mock_model_class.return_value = mock_model
+    tmpdir = tempfile.mkdtemp()
+    db_copy = os.path.join(tmpdir, "trump_data.db")
 
-        # Run build
-        build_embeddings.build_embeddings()
+    # Copy the real database to temporary location
+    shutil.copy2(DEFAULT_DB_PATH, db_copy)
 
-        # Verify database query
-        mock_cursor.execute.assert_called_once_with(
-            "SELECT post_id, date, text FROM truth_social WHERE text IS NOT NULL"
-        )
+    # Reduce the table to a small subset for fast testing
+    conn = sqlite3.connect(db_copy)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE truth_social_subset AS
+        SELECT * FROM truth_social WHERE text IS NOT NULL LIMIT 10
+    """)
+    cursor.execute("DROP TABLE truth_social")
+    cursor.execute("ALTER TABLE truth_social_subset RENAME TO truth_social")
+    conn.commit()
+    conn.close()
 
-        # Verify encoding
-        mock_model.encode.assert_called_once()
+    # Isolate ChromaDB path
+    old_chroma = os.environ.get("CHROMA_DB_PATH")
+    chroma_path = os.path.join(tmpdir, "chroma_db")
+    os.environ["CHROMA_DB_PATH"] = chroma_path
 
-        # Verify pickle dump was called with expected data
-        args, kwargs = mock_pickle_dump.call_args
-        saved_data = args[0]
-        assert "posts" in saved_data
-        assert "embeddings" in saved_data
-        assert len(saved_data["posts"]) == 2
-        assert saved_data["embeddings"] == [[0.1, 0.2], [0.3, 0.4]]
+    # Reload embeddings module to pick up new environment
+    import backend_database.embeddings
+    import importlib
+    importlib.reload(backend_database.embeddings)
+
+    yield db_copy
+
+    shutil.rmtree(tmpdir, ignore_errors=True)
+    if old_chroma:
+        os.environ["CHROMA_DB_PATH"] = old_chroma
+    else:
+        del os.environ["CHROMA_DB_PATH"]
+    importlib.reload(backend_database.embeddings)
+
+
+def test_build_index_creates_chromadb_collection(real_subset_env):
+    """build_index should create a ChromaDB collection with the correct number of documents."""
+    build_index(db_path=real_subset_env, force=True)
+
+    from backend_database.embeddings import PostSearchEngine
+    engine = PostSearchEngine(real_subset_env)
+
+    # Verify we have exactly the subset size (10 posts)
+    assert engine.collection.count() == 10
+
+
+def test_build_index_skips_if_collection_exists(real_subset_env):
+    """build_index should skip if the collection already has documents (unless forced)."""
+    # First build
+    build_index(db_path=real_subset_env, force=True)
+
+    # Second build without force should not modify the collection
+    build_index(db_path=real_subset_env, force=False)
+
+    from backend_database.embeddings import PostSearchEngine
+    engine = PostSearchEngine(real_subset_env)
+    assert engine.collection.count() == 10
