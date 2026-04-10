@@ -103,7 +103,7 @@ def render(T: dict):
             results = ask_question(query.strip(), top_k=top_k)
 
         if not results:
-            st.info(T["no_results"])
+            st.warning("⚠️ Could not connect to search backend. Please ensure the API server is running.")
             return
 
         # Business interpretation
@@ -133,4 +133,4 @@ def render(T: dict):
                         f"S&P :{impact_col}[{impact_str}]"
                     )
                 with cols[1]:
-                    st.metric(T["match"], f"{score*100:.0f}%")
+                    st.metric(T["match"], f"{score:.0f}%")

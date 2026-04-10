@@ -287,22 +287,25 @@ def get_gdelt_timeseries(weeks: int = 8) -> pd.DataFrame:
 
 def ask_question(query: str, top_k: int = 4) -> list:
     """
-    REPLACE: GET {API_URL}/qa?query=...&top_k=4 — endpoint มีอยู่แล้ว
-    ต้องการ response format: list of {post: {...}, score: float}
+    Get semantically similar posts from the real backend.
+    Returns list of {post: {...}, score: float}
     """
     try:
-        r = requests.get(f"{API_URL}/qa",
-                         params={"query": query, "top_k": top_k}, timeout=8)
+        r = requests.get(
+            f"{API_URL}/qa",
+            params={"query": query, "limit": top_k},
+            timeout=10
+        )
         if r.status_code == 200:
             data = r.json()
-            # ถ้า API ส่งกลับ format ต่างออกมา ปรับตรงนี้
-            if isinstance(data, list):
-                return data
             if "results" in data:
                 return data["results"]
-    except:
-        pass
-    return _mock_search(query, top_k)
+        # If we get here, something went wrong
+        print(f"QA API error: {r.status_code}")
+        return []
+    except Exception as e:
+        print(f"QA API connection failed: {e}")
+        return []
 
 
 def _mock_search(query: str, top_k: int) -> list:
