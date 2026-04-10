@@ -1,7 +1,7 @@
 """pages/topics.py — Topic breakdown with date context"""
 import streamlit as st
 from datetime import date, timedelta
-from frontend.data.api_client import get_category_summary
+from frontend._data.api_client import get_category_summary
 
 def render(T: dict):
     today = date.today()
@@ -39,7 +39,7 @@ def render(T: dict):
         st.info("No data available"); return
 
     # Pie chart
-    from frontend.components.charts import pie_chart
+    from frontend._components.charts import pie_chart
     import plotly.express as px
     from frontend.config import CATEGORY_COLORS
 

@@ -1,8 +1,8 @@
 """pages/market.py — Market impact with export button"""
 import streamlit as st
 import pandas as pd
-from frontend.data.api_client import get_stock_series
-from frontend.components.charts import stock_line_chart, category_impact_bar
+from frontend._data.api_client import get_stock_series
+from frontend._components.charts import stock_line_chart, category_impact_bar
 from frontend.config import INDEX_OPTIONS
 
 CAT_IMPACT_DATA = pd.DataFrame({
