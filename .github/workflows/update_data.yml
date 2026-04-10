@@ -17,18 +17,20 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install dependencies (kagglehub fix)
+      - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install --pre sigstore
-          pip install pandas datasets huggingface_hub kagglehub
+          pip install pandas datasets huggingface_hub apscheduler
 
-      - name: Run data pipeline
+      - name: Initialize database (if missing)
+        run: python backend_database/init_db.py
+
+      - name: Run daily update (one-off)
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: python data/build_db.py
+        run: python backend_database/daily_update.py --once
 
-      - name: Upload updated database to HF Dataset
+      - name: Upload database to Hugging Face Dataset
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
@@ -36,8 +38,8 @@ jobs:
           from huggingface_hub import HfApi
           api = HfApi()
           api.upload_file(
-              path_or_fileobj='data/trump_pulse.db',
-              path_in_repo='trump_pulse.db',
+              path_or_fileobj='backend_database/trump_data.db',
+              path_in_repo='trump_data.db',
               repo_id='Rogersurf/trump_pulse_data',
               repo_type='dataset'
           )
