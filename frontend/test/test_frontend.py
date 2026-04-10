@@ -7,7 +7,7 @@ Smoke tests สำหรับ frontend — GitHub Actions จะรันทุ
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from frontend.data.api_client import (
+from frontend._data.api_client import (
     get_posts, get_category_summary, get_stock_series,
     get_gdelt_summary, get_gdelt_timeseries,
     ask_question, get_pipeline_status, get_artifact_log,
