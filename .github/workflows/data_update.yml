@@ -1,4 +1,4 @@
-name: Trump Data Pipeline
+name: Weekly Data Update
 
 on:
   schedule:
@@ -29,5 +29,3 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: python backend_database/daily_update.py --once
-
-      # Upload step removed – not required for team access
