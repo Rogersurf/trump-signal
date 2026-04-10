@@ -68,3 +68,12 @@ def submit_feedback(feedback: FeedbackRequest):
     conn.commit()
     conn.close()
     return {"status": "feedback recorded"}
+
+@app.get("/debug/config")
+def debug_config():
+    import os
+    return {
+        "API_URL": os.environ.get("API_URL", "not set"),
+        "TRUMPPULSE_DATA_DIR": os.environ.get("TRUMPPULSE_DATA_DIR", "not set"),
+        "CHROMA_DB_PATH": os.environ.get("CHROMA_DB_PATH", "not set"),
+    }

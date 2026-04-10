@@ -287,24 +287,29 @@ def get_gdelt_timeseries(weeks: int = 8) -> pd.DataFrame:
 
 def ask_question(query: str, top_k: int = 4) -> list:
     """
-    Get semantically similar posts from the real backend.
-    Returns list of {post: {...}, score: float}
+    Call the real semantic search API.
+    Returns a list of dicts: [{"post": {...}, "score": float}, ...]
     """
+    import sys
+    url = f"{API_URL}/qa"
+    params = {"query": query, "limit": top_k}
+    print(f"[QA CLIENT] Calling {url} with params {params}", file=sys.stderr)
+
     try:
-        r = requests.get(
-            f"{API_URL}/qa",
-            params={"query": query, "limit": top_k},
-            timeout=10
-        )
+        r = requests.get(url, params=params, timeout=10)
+        print(f"[QA CLIENT] Status code: {r.status_code}", file=sys.stderr)
+        print(f"[QA CLIENT] Response text (first 200 chars): {r.text[:200]}", file=sys.stderr)
+
         if r.status_code == 200:
             data = r.json()
-            if "results" in data:
-                return data["results"]
-        # If we get here, something went wrong
-        print(f"QA API error: {r.status_code}")
-        return []
+            results = data.get("results", [])
+            print(f"[QA CLIENT] Parsed {len(results)} results", file=sys.stderr)
+            return results
+        else:
+            print(f"[QA CLIENT] Non-200 status: {r.status_code}", file=sys.stderr)
+            return []
     except Exception as e:
-        print(f"QA API connection failed: {e}")
+        print(f"[QA CLIENT] Exception: {e}", file=sys.stderr)
         return []
 
 
