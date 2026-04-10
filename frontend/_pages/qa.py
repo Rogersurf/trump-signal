@@ -1,7 +1,7 @@
 """pages/qa.py — Q&A tab with generalized business impact interpretation"""
 import streamlit as st
-from frontend.data.api_client import ask_question
-from frontend.components.post_card import render_post_card
+from frontend._data.api_client import ask_question
+from frontend._components.post_card import render_post_card
 from frontend.config import SENTIMENT_COLORS
 
 # ── Generalized interpretation engine ────────────────────────────────────────

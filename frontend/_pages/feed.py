@@ -1,8 +1,8 @@
 """pages/feed.py"""
 import streamlit as st
 from datetime import datetime, date, timedelta
-from frontend.data.api_client import get_posts
-from frontend.components.post_card import _detect_topics, _get_effects
+from frontend._data.api_client import get_posts
+from frontend._components.post_card import _detect_topics, _get_effects
 
 SENTIMENT_BADGE = {
     "POSITIVE": ("#EAF3DE", "#27500A"),

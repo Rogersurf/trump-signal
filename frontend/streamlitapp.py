@@ -8,13 +8,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import streamlit as st
 from frontend.config import LANGUAGES, TIMEZONES, TRANSLATIONS
-from frontend.data.api_client import is_api_alive
-import frontend.pages.feed         as feed
-import frontend.pages.market       as market
-import frontend.pages.topics       as topics
-import frontend.pages.geopolitical as geo
-import frontend.pages.qa           as qa
-import frontend.pages.dev          as dev
+from frontend._data.api_client import is_api_alive
+import frontend._pages.feed         as feed
+import frontend._pages.market       as market
+import frontend._pages.topics       as topics
+import frontend._pages.geopolitical as geo
+import frontend._pages.qa           as qa
+import frontend._pages.dev          as dev
 
 st.set_page_config(
     page_title="TrumpSignal",

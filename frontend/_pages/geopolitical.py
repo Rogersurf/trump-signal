@@ -1,8 +1,8 @@
 """pages/geopolitical.py — Geopolitical with export button"""
 import streamlit as st
 import pandas as pd
-from frontend.data.api_client import get_gdelt_summary, get_gdelt_timeseries
-from frontend.components.charts import gdelt_tone_bar, gdelt_breakdown_bar
+from frontend._data.api_client import get_gdelt_summary, get_gdelt_timeseries
+from frontend._components.charts import gdelt_tone_bar, gdelt_breakdown_bar
 
 def render(T: dict):
     st.caption("GDELT global event database · updates weekly")
