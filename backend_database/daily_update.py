@@ -1,6 +1,6 @@
 import sqlite3
 import pandas as pd
-import time
+import sys
 from datetime import datetime
 from datasets import load_dataset
 from apscheduler.schedulers.blocking import BlockingScheduler
@@ -12,40 +12,47 @@ HF_REPO = "chrissoria/trump-truth-social"
 
 def sync_task():
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{now}] 触发每日同步...")
+    print(f"[{now}] Triggering daily sync...")
 
     try:
-        # 获取最新数据
+        # Fetch latest data
         dataset = load_dataset(HF_REPO)
         df_new = dataset['train'].to_pandas()
         df_new['date'] = pd.to_datetime(df_new['date']).dt.strftime('%Y-%m-%d %H:%M:%S')
 
         with sqlite3.connect(DB_PATH) as conn:
-            # 策略：直接覆盖本地表。
-            # 如果数据量极庞大，可改用 SQL 'INSERT OR IGNORE' 实现真正的增量。
+            # Strategy: replace local table.
+            # For very large datasets, consider "INSERT OR IGNORE" for true incremental updates.
             df_new.to_sql("truth_social", conn, if_exists="replace", index=False)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_date ON truth_social (date)")
 
-        print(f"[{now}] 同步成功，当前记录数: {len(df_new)}")
+        print(f"[{now}] Sync successful. Record count: {len(df_new)}")
     except Exception as e:
-        print(f"[{now}] 同步异常: {e}")
+        print(f"[{now}] Sync error: {e}")
 
 
 if __name__ == "__main__":
-    # 检查数据库是否已由 init_db.py 生成
+    # Check if database was created by init_db.py
     if not os.path.exists(DB_PATH):
-        print("错误: 未找到数据库文件。请先运行 python init_db.py")
+        print("Error: Database file not found. Please run 'python init_db.py' first.")
         exit(1)
 
+    # One-off mode for CI/CD
+    if len(sys.argv) > 1 and sys.argv[1] == "--once":
+        sync_task()
+        print("One‑off sync completed. Exiting.")
+        exit(0)
+
+    # Scheduler mode (original behavior)
     scheduler = BlockingScheduler()
 
-    # 设定每天凌晨 02:00 同步一次
+    # Run daily at 02:00
     scheduler.add_job(sync_task, 'cron', hour=2, minute=0)
 
-    print(f"更新调度器已启动 [目标: {DB_PATH}]")
-    print("程序将保持后台运行...")
+    print(f"Update scheduler started [Target: {DB_PATH}]")
+    print("Running in background...")
 
     try:
         scheduler.start()
     except (KeyboardInterrupt, SystemExit):
-        print("调度服务已关闭。")
+        print("Scheduler stopped.")
