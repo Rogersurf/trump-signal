@@ -1,50 +1,42 @@
+"""FastAPI application for TrumpPulse."""
 from fastapi import FastAPI
 from pydantic import BaseModel
 import sqlite3
 from datetime import datetime, timezone
 import sys
 import os
-from backend_database.embeddings import get_search_engine
 
-# Add project root to path to import from backend_database
+# Add project root to Python path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from backend_database.data_api import TrumpDataClient
+
+from backend_database.embeddings import get_search_engine
+from backend_database.init_db import DEFAULT_DB_PATH
 
 app = FastAPI()
 
-# Add monitoring router AFTER app is created
+# Add monitoring router
 from app.api import monitoring
 app.include_router(monitoring.router)
 
-# Initialize data client with the real database path
-DB_PATH = "backend_database/trump_data.db"  # Created by init_db.py in project root
-client = TrumpDataClient(db_path=DB_PATH)
+# Initialize search engine (singleton, cached after first load)
+engine = get_search_engine(DEFAULT_DB_PATH)
 
 # ---------- Health Endpoint ----------
 @app.get("/")
 def health():
-    return {"status": "running"}
+    return {"status": "running", "database": DEFAULT_DB_PATH}
 
-# ---------- Sentiments Endpoint (Real Data) ----------
-@app.get("/sentiments")
-def get_sentiments(limit: int = 50):
-    """Return recent posts with engagement metrics."""
-    try:
-        df = client.get_top_posts(limit=limit)
-        return df.to_dict(orient="records")
-    except Exception as e:
-        return {"error": str(e)}
 
-# ---------- QA Endpoint (Real Data, Simple Keyword Search) ----------
+# ---------- Q&A Endpoint (Semantic Search) ----------
 @app.get("/qa")
 def qa(query: str, limit: int = 5):
     """Semantic search over Trump posts with similarity scores."""
     try:
-        engine = get_search_engine()
         results = engine.search(query, top_k=limit)
         return {"query": query, "results": results}
     except Exception as e:
         return {"error": str(e)}
+
 
 # ---------- Feedback Endpoint ----------
 class FeedbackRequest(BaseModel):
@@ -53,10 +45,11 @@ class FeedbackRequest(BaseModel):
     rating: int
     comment: str = ""
 
+
 @app.post("/feedback")
 def submit_feedback(feedback: FeedbackRequest):
     """Store user feedback for LLM evaluation."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DEFAULT_DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS feedback (
