@@ -224,7 +224,7 @@ def ask_question(query: str, top_k: int = 4) -> list:
                 return data["results"]
     except:
         pass
-
+#change to simple ollama --> embeddings let sees 
     # keyword search บน real data
     if _USE_REAL:
         try:
