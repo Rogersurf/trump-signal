@@ -4,7 +4,6 @@ pandas
 numpy
 datasets
 transformers
-torch
 scikit-learn
 sentence-transformers
 streamlit
