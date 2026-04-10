@@ -45,9 +45,11 @@ def qa(query: str, limit: int = 5):
             text = row.get("text", "") or row.get("content", "")
             if query.lower() in str(text).lower():
                 results.append({
-                    "post_id": row.get("post_id"),
-                    "date": row.get("date"),
-                    "text": text[:500]
+                    "post": {
+                        "post_id": row.get("post_id"),
+                        "date": row.get("date"),
+                        "text": text[:500]
+                    }
                 })
                 if len(results) >= limit:
                     break
