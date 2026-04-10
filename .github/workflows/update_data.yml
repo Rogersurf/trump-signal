@@ -38,7 +38,7 @@ jobs:
           from huggingface_hub import HfApi
           api = HfApi()
           api.upload_file(
-              path_or_fileobj='backend_database/trump_data.db',
+              path_or_fileobj='trump_data.db',
               path_in_repo='trump_data.db',
               repo_id='Rogersurf/trump_pulse_data',
               repo_type='dataset'
