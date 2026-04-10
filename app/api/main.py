@@ -2,10 +2,12 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 import sqlite3
 from datetime import datetime, timezone
+import sys
+import os
 
-from data.sample import get_sample_data
-from app.services.sentiment_service import analyze_dataset
-from app.models.qa import simple_qa
+# Add project root to path to import from backend_database
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from backend_database.data_api import TrumpDataClient
 
 app = FastAPI()
 
@@ -13,27 +15,47 @@ app = FastAPI()
 from app.api import monitoring
 app.include_router(monitoring.router)
 
-# Load sample data at startup
-texts = get_sample_data()
-sentiments = analyze_dataset(texts)
+# Initialize data client with the real database path
+DB_PATH = "backend_database/trump_data.db"  # Created by init_db.py in project root
+client = TrumpDataClient(db_path=DB_PATH)
 
-# Database path
-DB_PATH = "data/trump_pulse.db"
-
-# ---------- Existing Endpoints ----------
+# ---------- Health Endpoint ----------
 @app.get("/")
 def health():
     return {"status": "running"}
 
+# ---------- Sentiments Endpoint (Real Data) ----------
 @app.get("/sentiments")
-def get_sentiments():
-    return sentiments
+def get_sentiments(limit: int = 50):
+    """Return recent posts with engagement metrics."""
+    try:
+        df = client.get_top_posts(limit=limit)
+        return df.to_dict(orient="records")
+    except Exception as e:
+        return {"error": str(e)}
 
+# ---------- QA Endpoint (Real Data, Simple Keyword Search) ----------
 @app.get("/qa")
-def qa(query: str):
-    return simple_qa(query, texts)
+def qa(query: str, limit: int = 5):
+    """Search posts containing the query string."""
+    try:
+        df = client.get_full_data()
+        results = []
+        for _, row in df.iterrows():
+            text = row.get("text", "") or row.get("content", "")
+            if query.lower() in str(text).lower():
+                results.append({
+                    "post_id": row.get("post_id"),
+                    "date": row.get("date"),
+                    "text": text[:500]
+                })
+                if len(results) >= limit:
+                    break
+        return {"query": query, "results": results}
+    except Exception as e:
+        return {"error": str(e)}
 
-# ---------- New Feedback Endpoint ----------
+# ---------- Feedback Endpoint ----------
 class FeedbackRequest(BaseModel):
     query: str
     response: str
