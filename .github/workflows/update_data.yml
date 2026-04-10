@@ -1,4 +1,4 @@
-name: Weekly Data Update
+name: Trump Data Pipeline
 
 on:
   schedule:
