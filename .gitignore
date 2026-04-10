@@ -3,7 +3,8 @@ __pycache__/
 .env
 .venv
 venv/
-
+.idea
+.idea/
 data/raw/
 data/processed/
 artifacts/
