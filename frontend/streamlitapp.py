@@ -1,8 +1,5 @@
 """
-streamlitapp.py
-===============
-Entry point — routing และ sidebar เท่านั้น
-ไม่มีโลจิกอื่น ทุกอย่างอยู่ใน pages/
+streamlitapp.py — entry point, routing และ sidebar
 Run: streamlit run frontend/streamlitapp.py
 """
 
@@ -46,7 +43,7 @@ with st.sidebar:
 
     st.divider()
 
-    # API status
+    # API status only — no empty nav items
     if is_api_alive():
         st.success(T["api_online"], icon="✅")
     else:

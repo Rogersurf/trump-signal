@@ -1,4 +1,4 @@
-"""pages/market.py — Market impact tab"""
+"""pages/market.py — Market impact with export button"""
 import streamlit as st
 import pandas as pd
 from frontend.data.api_client import get_stock_series
@@ -14,23 +14,44 @@ CAT_IMPACT_DATA = pd.DataFrame({
 def render(T: dict):
     c1, c2 = st.columns([2, 1])
     with c1:
-        index_key = st.selectbox(T["select_index"], list(INDEX_OPTIONS.keys()),
-                                 format_func=lambda x: INDEX_OPTIONS[x])
+        index_key = st.selectbox(
+            T["select_index"],
+            options=list(INDEX_OPTIONS.keys()),
+            format_func=lambda x: INDEX_OPTIONS[x],
+        )
     with c2:
         days = st.slider(T["days_shown"], 7, 60, 30)
 
     df = get_stock_series(index_key, days)
-    st.plotly_chart(
-        stock_line_chart(df, INDEX_OPTIONS[index_key]),
-        use_container_width=True,
-    )
+    st.plotly_chart(stock_line_chart(df, INDEX_OPTIONS[index_key]), use_container_width=True)
     st.caption("⭐ Red stars = days with high-engagement Trump posts")
 
     st.divider()
-    st.subheader("Average S&P 500 move by post category (5 min after post)")
+    st.subheader("Avg S&P 500 move by post category (5 min after)")
     st.plotly_chart(category_impact_bar(CAT_IMPACT_DATA), use_container_width=True)
     st.caption(
-        "📝 **Interpretation:** Threatening international posts show the strongest "
-        "negative correlation with S&P 500. Enacting non-aggressive policy posts "
-        "lean positive. Note: correlation ≠ causation — other market forces always co-exist."
+        "📝 **Interpretation:** Threatening international posts show strongest "
+        "negative correlation. Policy posts lean positive. Correlation ≠ causation."
     )
+
+    # ── Export button ─────────────────────────────────────────────────────────
+    st.divider()
+    col_e1, col_e2 = st.columns(2)
+    with col_e1:
+        csv_stock = df.to_csv(index=False)
+        st.download_button(
+            label="⬇️ Export stock data (CSV)",
+            data=csv_stock,
+            file_name=f"trumpsignal_{index_key}_{days}days.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+    with col_e2:
+        csv_cat = CAT_IMPACT_DATA.to_csv(index=False)
+        st.download_button(
+            label="⬇️ Export category impact (CSV)",
+            data=csv_cat,
+            file_name="trumpsignal_category_impact.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
