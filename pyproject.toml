@@ -1,0 +1,11 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "trump-signal"
+version = "0.1.0"
+
+[tool.setuptools]
+# app, backend, frontend etc into package, avoid search path issues
+packages = ["app", "backend", "backend_database", "frontend"]
