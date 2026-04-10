@@ -13,4 +13,4 @@ matplotlib
 huggingface_hub
 pytest
 httpx
-apscheduler
+apschedulerchromadb
