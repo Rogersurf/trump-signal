@@ -42,22 +42,28 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          # Find the database file wherever it was created
-          DB_FILE=$(find . -name "trump_data.db" -type f -print -quit)
-          if [ -z "$DB_FILE" ]; then
-            echo "Error: trump_data.db not found anywhere!"
-            exit 1
-          fi
-          echo "Found database at: $DB_FILE"
           python -c "
           import os
+          from pathlib import Path
           from huggingface_hub import HfApi
+
+          # Find trump_data.db anywhere in the current directory tree
+          db_file = None
+          for path in Path('.').rglob('trump_data.db'):
+              if path.is_file():
+                  db_file = str(path)
+                  break
+
+          if not db_file:
+              raise FileNotFoundError('trump_data.db not found in repository')
+
+          print(f'Found database at: {db_file}')
           api = HfApi()
           api.upload_file(
-              path_or_fileobj='$DB_FILE',
+              path_or_fileobj=db_file,
               path_in_repo='trump_data.db',
               repo_id='Rogersurf/trump_pulse_data',
               repo_type='dataset'
           )
-          print('✅ Database uploaded from', '$DB_FILE')
+          print('✅ Database uploaded successfully')
           "
