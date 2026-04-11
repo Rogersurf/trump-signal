@@ -10,37 +10,49 @@ import threading
 # Add project root to Python path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from backend_database.embeddings import get_search_engine
+from backend_database.embeddings import get_search_engine, CHROMA_PATH
 from backend_database.init_db import DEFAULT_DB_PATH
 
-# Ensure ChromaDB index is populated on startup (non‑blocking)
-def _ensure_index():
+# ------------------------------------------------------------------------------
+# Background thread to ensure ChromaDB index is populated without blocking startup
+# ------------------------------------------------------------------------------
+def _ensure_index() -> None:
+    """Build the vector index in the background if the collection is empty."""
     engine = get_search_engine(DEFAULT_DB_PATH)
     count = engine.collection.count()
-    print(f"[STARTUP] DB path: {DEFAULT_DB_PATH}, Chroma count: {count}")
+    print(f"[STARTUP] DB path: {DEFAULT_DB_PATH}, Chroma collection count: {count}")
     if count == 0:
         print("[STARTUP] Collection is empty. Building index in background...")
         engine.build_index(force=True)
-        print("[STARTUP] Index built. New count:", engine.collection.count())
+        print("[STARTUP] Background index build completed. New count:", engine.collection.count())
+    else:
+        print("[STARTUP] Index already populated.")
 
 threading.Thread(target=_ensure_index, daemon=True).start()
 
+# ------------------------------------------------------------------------------
+# FastAPI app creation
+# ------------------------------------------------------------------------------
 app = FastAPI()
 
 # Add monitoring router
 from app.api import monitoring
 app.include_router(monitoring.router)
 
-# Initialize search engine (singleton) for endpoints
+# Singleton search engine instance (reused across requests)
 engine = get_search_engine(DEFAULT_DB_PATH)
 
-# ---------- Health Endpoint ----------
+# ------------------------------------------------------------------------------
+# Health Endpoint
+# ------------------------------------------------------------------------------
 @app.get("/")
 def health():
     return {"status": "running", "database": DEFAULT_DB_PATH}
 
 
-# ---------- Q&A Endpoint (Semantic Search) ----------
+# ------------------------------------------------------------------------------
+# Q&A Endpoint (Semantic Search)
+# ------------------------------------------------------------------------------
 @app.get("/qa")
 def qa(query: str, limit: int = 5):
     """Semantic search over Trump posts with similarity scores."""
@@ -51,7 +63,9 @@ def qa(query: str, limit: int = 5):
         return {"error": str(e)}
 
 
-# ---------- Feedback Endpoint ----------
+# ------------------------------------------------------------------------------
+# Feedback Endpoint
+# ------------------------------------------------------------------------------
 class FeedbackRequest(BaseModel):
     query: str
     response: str
@@ -83,7 +97,9 @@ def submit_feedback(feedback: FeedbackRequest):
     return {"status": "feedback recorded"}
 
 
-# ---------- Debug Endpoints ----------
+# ------------------------------------------------------------------------------
+# Debug Endpoints
+# ------------------------------------------------------------------------------
 @app.get("/debug/config")
 def debug_config():
     return {
@@ -95,7 +111,6 @@ def debug_config():
 
 @app.get("/debug/status")
 def debug_status():
-    from backend_database.embeddings import CHROMA_PATH
     return {
         "db_path": engine.db_path,
         "db_exists": os.path.exists(engine.db_path),
@@ -110,4 +125,13 @@ def debug_paths():
         "TRUMPPULSE_DATA_DIR": os.environ.get("TRUMPPULSE_DATA_DIR", "not set"),
         "DEFAULT_DB_PATH": DEFAULT_DB_PATH,
         "db_exists": os.path.exists(DEFAULT_DB_PATH),
+    }
+
+
+@app.get("/debug/index")
+def debug_index():
+    return {
+        "collection_count": engine.collection.count(),
+        "db_path": engine.db_path,
+        "chroma_path": CHROMA_PATH,
     }
