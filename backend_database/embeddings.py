@@ -15,8 +15,12 @@ class PostSearchEngine:
         self.model = SentenceTransformer(MODEL_NAME)
         self.client = chromadb.PersistentClient(
             path=CHROMA_PATH,
-            settings=Settings(anonymized_telemetry=False)
-        )
+            settings=Settings(
+            anonymized_telemetry=False,
+            allow_reset=True,
+            is_persistent=True          # <-- adição chave
+    )
+)
         self.collection = self._get_or_create_collection()
         self.db_path = db_path
 
