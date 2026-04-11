@@ -9,7 +9,11 @@ HF_REPO = "chrissoria/trump-truth-social"
 
 # Default database location – always inside backend_database/ unless overridden
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_DB_PATH = os.path.join(_BASE_DIR, "trump_data.db")
+_DATA_DIR = os.environ.get("TRUMPPULSE_DATA_DIR")
+if _DATA_DIR:
+    DEFAULT_DB_PATH = os.path.join(_DATA_DIR, "trump_data.db")
+else:
+    DEFAULT_DB_PATH = os.path.join(_BASE_DIR, "trump_data.db")
 
 
 def initialize(db_path: str = None):
