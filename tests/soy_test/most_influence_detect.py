@@ -1,6 +1,8 @@
 """
 Trump Truth Social → Market Impact Analyzer
 ============================================
+Reads from SQLite via backend_database.data_api.TrumpDataClient (DB_PATH is
+defined there). No yfinance needed — all price data is already in the DB.
 All market data is already in the SQLite DB — no yfinance needed.
 
 Table: truth_social
@@ -17,9 +19,8 @@ Impact is measured as price move AROUND the post:
 pip install pandas numpy scikit-learn xgboost plotly dash dash-bootstrap-components
 """
 
-import os
-import sqlite3
 import warnings
+from datetime import timedelta
 
 import dash
 import dash_bootstrap_components as dbc
