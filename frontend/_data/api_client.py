@@ -127,23 +127,38 @@ def get_stock_series(index: str = "sp500", days: int = 30) -> pd.DataFrame:
             df    = _client.get_market_impact(start=start, end=end)
 
             if not df.empty:
-                # map index to column name
+                # get_market_impact returns _5min_pct columns for sp500/qqq/dia only
                 col_map = {
-                    "sp500": "sp500_close",
-                    "djt":   "djt_close",
-                    "qqq":   "qqq_close",
-                    "gld":   "gld_close",
-                    "tlt":   "tlt_close",
+                    "sp500": "sp500_5min_pct",
+                    "qqq":   "qqq_5min_pct",
+                    "dia":   "dia_5min_pct",
                 }
-                col = col_map.get(index, "sp500_close")
+                col = col_map.get(index)
 
-                if col in df.columns:
+                if col and col in df.columns:
                     result = df[["date", col]].copy()
                     result = result.rename(columns={col: "price"})
                     result["price"]        = pd.to_numeric(result["price"], errors="coerce")
-                    result["has_big_post"] = False
-                    result["pct_change"]   = result["price"].pct_change().fillna(0).round(4)
+                    result["has_big_post"] = result["price"].abs() > 0.3   # flag big moves
+                    result["pct_change"]   = result["price"].round(4)
                     return result.dropna(subset=["price"]).reset_index(drop=True)
+
+                # fallback for djt/gld/tlt — use get_daily_metrics which has close prices
+                close_map = {
+                    "djt": "djt_close",
+                    "gld": "gld_close",
+                    "tlt": "tlt_close",
+                }
+                close_col = close_map.get(index)
+                if close_col:
+                    dm = _client.get_daily_metrics(date_from=start, date_to=end)
+                    if not dm.empty and close_col in dm.columns:
+                        result = dm[["day", close_col]].copy()
+                        result = result.rename(columns={"day": "date", close_col: "price"})
+                        result["price"]        = pd.to_numeric(result["price"], errors="coerce")
+                        result["has_big_post"] = False
+                        result["pct_change"]   = result["price"].pct_change().fillna(0).round(4)
+                        return result.dropna(subset=["price"]).reset_index(drop=True)
 
         except Exception as e:
             print(f"get_stock_series error: {e}")
@@ -161,7 +176,8 @@ def get_gdelt_summary() -> dict:
             df = _client.get_gdelt_events()
             if not df.empty:
                 row  = df.iloc[-1]
-                tone = float(row.get("gdelt_avg_tone", 0) or 0)
+                # get_gdelt_events returns: military, sanctions, protest, tone, total_events
+                tone = float(row.get("tone", 0) or row.get("gdelt_avg_tone", 0) or 0)
                 interp = (
                     "Global tension elevated — verbal conflict high, world already tense when Trump posted."
                     if tone < -2 else
@@ -170,14 +186,14 @@ def get_gdelt_summary() -> dict:
                 )
                 return {
                     "week_of":            str(row.get("day", "Latest")),
-                    "military_events":    int(row.get("gdelt_military", 0) or 0),
-                    "verbal_conflict":    int(row.get("gdelt_verbal_conflict", 0) or 0),
+                    "military_events":    int(row.get("military",          row.get("gdelt_military", 0)) or 0),
+                    "verbal_conflict":    int(row.get("protest",           row.get("gdelt_verbal_conflict", 0)) or 0),
                     "verbal_cooperation": int(row.get("gdelt_verbal_cooperation", 0) or 0),
-                    "material_conflict":  int(row.get("gdelt_material_conflict", 0) or 0),
-                    "diplomatic":         int(row.get("gdelt_diplomatic", 0) or 0),
+                    "material_conflict":  int(row.get("sanctions",         row.get("gdelt_material_conflict", 0)) or 0),
+                    "diplomatic":         int(row.get("gdelt_diplomatic",  0) or 0),
                     "goldstein_avg":      round(float(row.get("gdelt_goldstein_avg", 0) or 0), 2),
                     "avg_tone":           round(tone, 2),
-                    "total_events":       int(row.get("gdelt_total_events", 0) or 0),
+                    "total_events":       int(row.get("total_events",      row.get("gdelt_total_events", 0)) or 0),
                     "interpretation":     interp,
                 }
         except Exception as e:
@@ -198,12 +214,17 @@ def get_gdelt_timeseries(weeks: int = 8) -> pd.DataFrame:
             start = (datetime.now() - timedelta(weeks=weeks)).strftime("%Y-%m-%d")
             df    = _client.get_gdelt_trend(start=start, end=end)
             if not df.empty:
+                # get_gdelt_trend returns: day, gdelt_avg_tone, gdelt_verbal_conflict, ...
                 df = df.rename(columns={
-                    "day":                  "week",
-                    "gdelt_avg_tone":       "avg_tone",
+                    "day":                   "week",
+                    "gdelt_avg_tone":        "avg_tone",
+                    "tone":                  "avg_tone",        # fallback alias
                     "gdelt_verbal_conflict": "verbal_conflict",
+                    "protest":               "verbal_conflict",  # fallback alias
                 })
-                return df[["week", "avg_tone", "verbal_conflict"]].tail(weeks).reset_index(drop=True)
+                # keep only what geopolitical.py needs
+                keep = [c for c in ["week", "avg_tone", "verbal_conflict"] if c in df.columns]
+                return df[keep].tail(weeks).reset_index(drop=True)
         except Exception as e:
             print(f"get_gdelt_timeseries error: {e}")
 
@@ -345,15 +366,18 @@ def get_pipeline_status() -> dict:
     if _USE_REAL:
         try:
             kpis = _client.get_kpis()
+            total = int(kpis.get("total_posts", 0))
+            pct_mh = float(kpis.get("pct_market_hours", 0) or 0)
             return {
-                "last_ingest":          str(kpis.get("last_update", "N/A")),
-                "last_preprocess":      str(kpis.get("last_update", "N/A")),
-                "last_sentiment_run":   "pending",
-                "last_embedding_build": "pending",
-                "last_gdelt_update":    str(kpis.get("last_update", "N/A")),
-                "total_posts":          int(kpis.get("total_posts", 0)),
-                "posts_today":          int(kpis.get("posts_today", 0) if "posts_today" in kpis else 0),
+                "last_ingest":          "daily @ 02:00 UTC (APScheduler)",
+                "last_preprocess":      "on ingest",
+                "last_sentiment_run":   "pre-labeled in dataset",
+                "last_embedding_build": "on ingest (ChromaDB)",
+                "last_gdelt_update":    "weekly",
+                "total_posts":          total,
+                "posts_today":          0,
                 "rows_dropped_today":   0,
+                "pct_market_hours":     round(pct_mh, 1),
                 "model_name":           "cardiffnlp/twitter-roberta-base-sentiment",
                 "embedding_model":      "all-MiniLM-L6-v2",
                 "dataset_version":      "chrissoria/trump-truth-social @ main",
