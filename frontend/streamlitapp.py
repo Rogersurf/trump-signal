@@ -27,7 +27,6 @@ st.set_page_config(
 with st.sidebar:
     st.markdown("## 📊 TrumpSignal")
 
-    lang      = st.selectbox("Language / ภาษา / 语言", LANGUAGES)
     T         = TRANSLATIONS[lang]
 
     tz_label  = st.selectbox(T["timezone"], list(TIMEZONES.keys()))
