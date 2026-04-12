@@ -14,4 +14,3 @@ huggingface_hub
 pytest
 httpx
 apscheduler
-chromadb==0.4.24
