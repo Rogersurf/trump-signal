@@ -3,6 +3,18 @@ Trump Truth Social → Market Impact Analyzer
 ============================================
 Reads from SQLite via backend_database.data_api.TrumpDataClient (DB_PATH is
 defined there). No yfinance needed — all price data is already in the DB.
+All market data is already in the SQLite DB — no yfinance needed.
+
+Table: truth_social
+Key market columns per ticker (18 tickers):
+  {ticker}_open, {ticker}_close, {ticker}_1hr_before,
+  {ticker}_5min_before, {ticker}_at_post, {ticker}_5min_after, {ticker}_1hr_after
+
+Impact is measured as price move AROUND the post:
+  - during_market_hours=True  → 5min_before → 5min_after  (immediate reaction)
+                               + at_post    → 1hr_after    (sustained move)
+  - during_market_hours=False → prior close → next open    = _open vs _close
+                                (already captured by open/close columns)
 
 pip install pandas numpy scikit-learn xgboost plotly dash dash-bootstrap-components
 """
@@ -23,43 +35,50 @@ from sklearn.metrics import (
     roc_auc_score,
     roc_curve,
 )
-from sklearn.model_selection import TimeSeriesSplit, cross_val_score
+from sklearn.model_selection import StratifiedKFold, cross_val_score
 from sklearn.preprocessing import StandardScaler
 from xgboost import XGBClassifier
-
-from backend_database.data_api import DB_PATH, TrumpDataClient
-import joblib, json
-from pathlib import Path
-
-MODEL_DIR = Path(__file__).parent / "model_artifacts"
-MODEL_DIR.mkdir(parents=True, exist_ok=True)
+from backend_database.data_api import *
 warnings.filterwarnings("ignore")
 
 # ─────────────────────────────────────────────
 # CONFIG
 # ─────────────────────────────────────────────
-TABLE_NAME     = "truth_social"
+TABLE_NAME = "truth_social"
+
+# Impact threshold per ticker type (abs % move)
+THRESHOLDS = {
+    "default": 0.005,   # 0.5% for broad indices (sp500, qqq, dia)
+    "djt":     0.020,   # 2.0% for Trump Media (very volatile)
+    "ibit":    0.015,   # 1.5% for Bitcoin ETF
+    "uso":     0.010,   # 1.0% for oil
+    "gld":     0.008,   # 0.8% for gold
+}
+
+# Primary ticker used for the main impact label + dashboard
 PRIMARY_TICKER = "sp500"
 
+# All 18 tickers in the dataset
 TICKERS = [
     "sp500", "dia", "qqq", "djt", "lmt", "war", "xli", "xlv",
     "xph", "cnrg", "gld", "uso", "fxi", "eww", "vgk", "ibit", "tlt", "uup",
 ]
 
+# Ticker display names for charts
 TICKER_NAMES = {
-    "sp500": "S&P 500",    "dia":  "Dow Jones",    "qqq":  "Nasdaq-100",
-    "djt":  "Trump Media", "lmt":  "Lockheed",     "war":  "Military ETF",
-    "xli":  "Industrials", "xlv":  "Healthcare",   "xph":  "Pharma",
-    "cnrg": "Clean Energy","gld":  "Gold",          "uso":  "Oil",
-    "fxi":  "China ETF",   "eww":  "Mexico ETF",   "vgk":  "Europe ETF",
-    "ibit": "Bitcoin ETF", "tlt":  "Bonds",         "uup":  "USD Index",
+    "sp500": "S&P 500", "dia": "Dow Jones", "qqq": "Nasdaq-100",
+    "djt": "Trump Media", "lmt": "Lockheed Martin", "war": "Military ETF",
+    "xli": "Industrials", "xlv": "Healthcare", "xph": "Pharma",
+    "cnrg": "Clean Energy", "gld": "Gold", "uso": "Oil",
+    "fxi": "China ETF", "eww": "Mexico ETF", "vgk": "Europe ETF",
+    "ibit": "Bitcoin ETF", "tlt": "Treasury Bonds", "uup": "USD Index",
 }
 
 CAT_COLS = [
     "cat_attacking_individual", "cat_attacking_opposition",
-    "cat_threatening_intl",     "cat_enacting_aggressive",
-    "cat_enacting_nonaggressive","cat_deescalating",
-    "cat_praising_endorsing",   "cat_self_promotion", "cat_other",
+    "cat_threatening_intl", "cat_enacting_aggressive",
+    "cat_enacting_nonaggressive", "cat_deescalating",
+    "cat_praising_endorsing", "cat_self_promotion", "cat_other",
 ]
 
 GDELT_COLS = [
@@ -70,146 +89,135 @@ GDELT_COLS = [
     "gdelt_total_events",
 ]
 
-# Rolling windows (prior N posts) for cat_* context features
-CAT_WINDOWS = [5, 10, 20]
-
-# Leakage-prone columns — NEVER used as features
-LEAKAGE_COLS = {
-    "favourites_count", "replies_count", "reblogs_count",
-    "likes", "reposts", "replies", "views",
+KEYWORD_GROUPS = {
+    "tariff":   r"\b(tariff|tariffs|trade war|import tax|customs)\b",
+    "china":    r"\b(china|chinese|beijing|xi jinping|ccp)\b",
+    "fed":      r"\b(fed|federal reserve|powell|interest rate|rate hike|rate cut)\b",
+    "energy":   r"\b(oil|gas|energy|opec|pipeline|lng|crude)\b",
+    "crypto":   r"\b(bitcoin|crypto|btc|ethereum|digital currency)\b",
+    "military": r"\b(military|troops|war|nato|weapon|defense)\b",
+    "economy":  r"\b(economy|gdp|recession|inflation|jobs|unemployment)\b",
+    "company":  r"\b(apple|tesla|amazon|google|microsoft|stock|shares)\b",
+    "threat":   r"\b(sanction|ban|block|fine|investigate|sue|lawsuit)\b",
 }
 
 
 # ─────────────────────────────────────────────
-# 1.  LOAD DATA
+# 1.  LOAD POSTS
 # ─────────────────────────────────────────────
-def load_posts() -> tuple[pd.DataFrame, list, list]:
-    """
-    Uses TrumpDataClient.get_full_data() — removes the gdelt_total_events > 0
-    filter so we load ALL posts (including those without GDELT data).
-    Falls back to direct SQL if needed.
-    """
-    import sqlite3
-    print(f"[DB] Using DB_PATH: {DB_PATH}")
-
-    conn = sqlite3.connect(DB_PATH)
-
-    # Discover actual columns
-    cur      = conn.execute(f"PRAGMA table_info({TABLE_NAME})")
+def load_posts(db_path: str, table: str) -> pd.DataFrame:
+    conn = sqlite3.connect(db_path)
+    cur  = conn.execute(f"PRAGMA table_info({table})")
     all_cols = [r[1] for r in cur.fetchall()]
 
-    ticker_suffixes = [
-        "_open", "_close", "_1hr_before", "_5min_before",
-        "_at_post", "_5min_after", "_1hr_after",
-    ]
-    ticker_cols = [
-        c for c in all_cols
-        if any(c == f"{t}{s}" for t in TICKERS for s in ticker_suffixes)
-    ]
-    cat_cols   = [c for c in all_cols if c in CAT_COLS]
-    gdelt_cols = [c for c in all_cols if c in GDELT_COLS]
+    # Discover which ticker/gdelt/cat cols actually exist in this DB
+    ticker_cols = [c for c in all_cols
+                   if any(c.startswith(f"{t}_") for t in TICKERS)]
+    cat_cols    = [c for c in all_cols if c in CAT_COLS]
+    gdelt_cols  = [c for c in all_cols if c in GDELT_COLS]
 
     base_cols = [
-        "datetime", "date", "time", "time_eastern", "day_of_week",
-        "text", "url", "post_id",
-        "is_president", "is_president_elect",
+        "date", "time", "time_eastern", "day_of_week", "datetime",
+        "text", "url", "post_id", "is_president", "is_president_elect",
         "during_market_hours", "market_period",
-        "has_media", "sp500_resolution",
+        "replies_count", "reblogs_count", "favourites_count",
+        "has_media",
     ]
     base_cols = [c for c in base_cols if c in all_cols]
 
-    select_cols = base_cols + ticker_cols + cat_cols + gdelt_cols
-    df = pd.read_sql(f"SELECT {', '.join(select_cols)} FROM {TABLE_NAME}", conn)
+    select = base_cols + ticker_cols + cat_cols + gdelt_cols
+    df = pd.read_sql(f"SELECT {', '.join(select)} FROM {table}", conn)
     conn.close()
 
     # ── datetime ──────────────────────────────────────────
     df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce", utc=True)
-    df["date"]     = pd.to_datetime(df["date"],     errors="coerce")
+    df["date"]     = pd.to_datetime(df["date"], errors="coerce")
 
-    # ── INTEGER booleans: stored as float due to NULLs ───
+    # ── booleans ─────────────────────────────────────────
     for bc in ["during_market_hours", "is_president", "is_president_elect", "has_media"]:
         if bc in df.columns:
-            df[bc] = df[bc].astype(float).fillna(0) == 1.0
+            df[bc] = df[bc].astype(str).str.lower().isin(["1", "true", "yes"])
 
-    # ── numeric cols (skip text/resolution columns) ──────
-    skip = {"sp500_resolution"} | LEAKAGE_COLS
-    num_cols = [c for c in ticker_cols + cat_cols + gdelt_cols if c not in skip]
+    # ── numerics ─────────────────────────────────────────
+    num_cols = ticker_cols + cat_cols + gdelt_cols + [
+        "replies_count", "reblogs_count", "favourites_count"
+    ]
+    num_cols = [c for c in num_cols if c != "sp500_resolution"]
+
     for c in num_cols:
         if c in df.columns:
+            print(df[c])
             df[c] = pd.to_numeric(df[c], errors="coerce")
 
     df["content"] = df["text"].fillna("").astype(str)
     df = df.dropna(subset=["datetime"]).reset_index(drop=True)
 
-    print(f"      {len(df):,} posts  |  "
-          f"{len(ticker_cols)} ticker cols  |  "
-          f"{len(cat_cols)} cat cols  |  "
-          f"{len(gdelt_cols)} gdelt cols")
-
-    return df, cat_cols, gdelt_cols
+    return df, ticker_cols, cat_cols, gdelt_cols
 
 
 # ─────────────────────────────────────────────
-# 2.  COMPUTE RETURNS & LABELS
+# 2.  COMPUTE RETURNS FROM EXISTING PRICE COLS
 # ─────────────────────────────────────────────
-def compute_returns(df: pd.DataFrame) -> pd.DataFrame:
+def compute_returns(df: pd.DataFrame, ticker_cols: list) -> pd.DataFrame:
+    """
+    For each ticker compute:
+      immediate_ret  : 5min_before → 5min_after  (market hours posts)
+      sustained_ret  : at_post     → 1hr_after   (market hours posts)
+      overnight_ret  : open        → close        (off-hours posts)
+      daily_ret      : open        → close        (all posts, context)
+    Then build primary label from PRIMARY_TICKER.
+    """
     for t in TICKERS:
+        cols_needed = [f"{t}_{s}" for s in
+                       ["open", "close", "1hr_before", "5min_before",
+                        "at_post", "5min_after", "1hr_after"]]
+        # Only compute if at least some cols exist
+        existing = [c for c in cols_needed if c in df.columns]
+        if not existing:
+            continue
+
+        # Daily return (open → close) — available for ALL posts
         if f"{t}_open" in df.columns and f"{t}_close" in df.columns:
             df[f"{t}_daily_ret"] = (
                 (df[f"{t}_close"] - df[f"{t}_open"]) / df[f"{t}_open"]
             )
+
+        # Immediate reaction (during market hours)
         if f"{t}_5min_before" in df.columns and f"{t}_5min_after" in df.columns:
             df[f"{t}_immediate_ret"] = (
                 (df[f"{t}_5min_after"] - df[f"{t}_5min_before"])
                 / df[f"{t}_5min_before"]
             )
+
+        # Sustained move (during market hours)
         if f"{t}_at_post" in df.columns and f"{t}_1hr_after" in df.columns:
             df[f"{t}_sustained_ret"] = (
                 (df[f"{t}_1hr_after"] - df[f"{t}_at_post"])
                 / df[f"{t}_at_post"]
             )
 
-    t         = PRIMARY_TICKER
-    imm_col   = f"{t}_immediate_ret"
-    daily_col = f"{t}_daily_ret"
+    # ── Primary impact label ───────────────────────────────
+    t = PRIMARY_TICKER
+    thresh = THRESHOLDS.get(t, THRESHOLDS["default"])
 
-    is_during = (
-        df["during_market_hours"] & df[imm_col].notna()
-        if imm_col in df.columns
-        else pd.Series(False, index=df.index)
-    )
-
-    if imm_col in df.columns and daily_col in df.columns:
+    # During market hours → use immediate reaction
+    # Off hours           → use daily open→close
+    if f"{t}_immediate_ret" in df.columns and f"{t}_daily_ret" in df.columns:
         df["primary_ret"] = np.where(
-            is_during, df[imm_col], df[daily_col],
+            df["during_market_hours"],
+            df[f"{t}_immediate_ret"],
+            df[f"{t}_daily_ret"],
         )
-    elif daily_col in df.columns:
-        df["primary_ret"] = df[daily_col]
+    elif f"{t}_daily_ret" in df.columns:
+        df["primary_ret"] = df[f"{t}_daily_ret"]
     else:
         df["primary_ret"] = np.nan
 
-
-    # 去掉非open hour 的所有数据
-    df = df[df["during_market_hours"]].copy()
-    # 只选择 2025之后的数据
-    df = df[df["date"] >= "2025-01-01"].copy()
-    # 动态 threshold：85th percentile，保证约 15% 是 high-impact
-    dynamic_thresh = df["primary_ret"].dropna().abs().quantile(0.85)
-    print(f"      Threshold (85th pct): {dynamic_thresh*100:.3f}%")
-
-    df["high_impact"] = np.where(
-        df["primary_ret"].isna(),
-        np.nan,
-        (df["primary_ret"].abs() >= dynamic_thresh).astype(float),
-    )
-
-    print(f"      during_market_hours=True : {df['during_market_hours'].sum():,}")
-    print(f"      Using immediate_ret      : {is_during.sum():,} posts")
-    print(f"      Using daily_ret          : {(~is_during).sum():,} posts")
-    print(f"      High-impact              : {int(df['high_impact'].fillna(0).sum()):,} "
-          f"/ {df['primary_ret'].notna().sum():,}")
+    df["high_impact"] = (df["primary_ret"].abs() >= thresh).astype(float)
+    df.loc[df["primary_ret"].isna(), "high_impact"] = np.nan
 
     return df
+
 
 # ─────────────────────────────────────────────
 # 3.  FEATURE ENGINEERING
@@ -217,34 +225,37 @@ def compute_returns(df: pd.DataFrame) -> pd.DataFrame:
 def engineer_features(df: pd.DataFrame,
                        cat_cols: list,
                        gdelt_cols: list) -> tuple[pd.DataFrame, list]:
-    """
-    Features (no data leakage):
-      ✅ Text structure       — fixed at post time
-      ✅ Temporal cyclical    — fixed at post time
-      ✅ Context flags        — is_president, market_period (fixed at post time)
-      ✅ cat_* of THIS post   — LLM labels computed at post time
-      ✅ Rolling cat_* stats  — shift(1) over prior 5/10/20 posts → trend context
-      ✅ Daily cat_* cumsum   — how much of this topic Trump posted earlier today
-      ✅ GDELT                — daily aggregate, available same day
-      ❌ likes/reposts/replies — REMOVED (accumulate after posting → leakage)
-      ❌ keyword regex         — REMOVED (replaced by LLM cat_* labels)
-    """
-    # Sort chronologically — mandatory for rolling features
-    df = df.sort_values("datetime").reset_index(drop=True)
+    text = df["content"].str.lower().fillna("")
 
-    # ── 1. Text structure ─────────────────────────────────
+    # Keyword flags
+    for name, pat in KEYWORD_GROUPS.items():
+        df[f"kw_{name}"] = text.str.contains(pat, regex=True).astype(int)
+
+    pos_pat = r"\b(great|huge|winning|beautiful|best|tremendous|deal|agreement)\b"
+    neg_pat = r"\b(fake|disaster|corrupt|failing|witch hunt|hoax|rigged|bad|horrible)\b"
+    df["pos_words"]  = text.str.contains(pos_pat, regex=True).astype(int)
+    df["neg_words"]  = text.str.contains(neg_pat, regex=True).astype(int)
     df["text_len"]   = df["content"].str.len().fillna(0)
-    df["caps_ratio"] = (
-        df["content"].str.findall(r"[A-Z]").apply(len) / (df["text_len"] + 1)
-    )
-    df["caps_count"] = df["content"].str.findall(r"[A-Z]").apply(len)
+    df["caps_ratio"] = (df["content"].str.findall(r"[A-Z]").apply(len)
+                        / (df["text_len"] + 1))
     df["exclaim"]    = df["content"].str.count("!")
     df["question"]   = df["content"].str.count(r"\?")
     df["has_url"]    = df["content"].str.contains(r"https?://", regex=True).astype(int)
     df["word_count"] = df["content"].str.split().apply(len)
-    df["has_media_flag"] = df["has_media"].astype(int) if "has_media" in df.columns else 0
 
-    # ── 2. Temporal ───────────────────────────────────────
+    # Engagement (log-scaled)
+    for col, alias in [("favourites_count", "likes"),
+                       ("reblogs_count",    "reposts"),
+                       ("replies_count",    "replies")]:
+        src = col if col in df.columns else None
+        df[f"log_{alias}"] = np.log1p(df[src]) if src else 0.0
+    df["engagement_score"] = (
+        df["log_likes"] * 1.0 +
+        df["log_reposts"] * 2.0 +
+        df["log_replies"] * 0.5
+    )
+
+    # Temporal (cyclical)
     df["hour"]     = df["datetime"].dt.hour
     df["dow"]      = df["datetime"].dt.dayofweek
     df["hour_sin"] = np.sin(2 * np.pi * df["hour"] / 24)
@@ -252,71 +263,30 @@ def engineer_features(df: pd.DataFrame,
     df["dow_sin"]  = np.sin(2 * np.pi * df["dow"] / 7)
     df["dow_cos"]  = np.cos(2 * np.pi * df["dow"] / 7)
 
-    # ── 3. Context flags ──────────────────────────────────
-    df["is_market_hours"]    = df["during_market_hours"].astype(int)
-    df["is_president_flag"]  = (df["is_president"].astype(int)
-                                if "is_president" in df.columns else 0)
-    df["is_pres_elect_flag"] = (df["is_president_elect"].astype(int)
-                                if "is_president_elect" in df.columns else 0)
+    # Binary context flags
+    df["is_market_hours"]      = df["during_market_hours"].astype(int)
+    df["is_president_flag"]    = df["is_president"].astype(int) if "is_president" in df.columns else 0
+    df["is_pres_elect_flag"]   = df["is_president_elect"].astype(int) if "is_president_elect" in df.columns else 0
+    df["has_media_flag"]       = df["has_media"].astype(int) if "has_media" in df.columns else 0
 
+    # Market period one-hot
     mp_dummies = pd.get_dummies(
         df["market_period"].fillna("unknown"), prefix="mp"
     ).astype(int)
     df = pd.concat([df, mp_dummies], axis=1)
 
-    # ── 4. This post's cat_* (LLM labels, fixed at post time) ────────
-    existing_cat = [c for c in cat_cols if c in df.columns]
-
-    # ── 5. Rolling cat_* context: prior N posts (shift(1) → no leakage) ─
-    rolling_feat_cols = []
-    for c in existing_cat:
-        sname = c.replace("cat_", "")
-        for w in CAT_WINDOWS:
-            rolled    = df[c].shift(1).rolling(window=w, min_periods=1)
-            mean_col  = f"roll{w}_{sname}_mean"
-            std_col   = f"roll{w}_{sname}_std"
-            ratio_col = f"roll{w}_{sname}_ratio"
-            df[mean_col]  = rolled.mean()
-            df[std_col]   = rolled.std().fillna(0)
-            # ratio: how much stronger is THIS post vs the recent trend?
-            df[ratio_col] = df[c] / (df[mean_col] + 1e-6)
-            rolling_feat_cols += [mean_col, std_col, ratio_col]
-
-    # ── 6. Daily cumulative cat_* (earlier posts same day → no leakage) ─
-    df["_date_only"] = df["datetime"].dt.date
-    daily_cat_cols = []
-    for c in existing_cat:
-        sname     = c.replace("cat_", "")
-        dcol      = f"daily_{sname}_sum"
-        df[dcol]  = (
-            df.groupby("_date_only")[c]
-              .transform(lambda x: x.shift(1).cumsum().fillna(0))
-        )
-        daily_cat_cols.append(dcol)
-    df = df.drop(columns=["_date_only"])
-
-    # ── 7. GDELT (daily aggregate, no leakage) ───────────
-    existing_gdelt = [c for c in gdelt_cols if c in df.columns]
-
-    # ── Final feature list ────────────────────────────────
     feature_cols = (
-        ["text_len", "caps_ratio", "caps_count","exclaim", "question",
-         "has_url", "word_count", "has_media_flag"]
-        + ["hour_sin", "hour_cos", "dow_sin", "dow_cos"]
-        + ["is_market_hours", "is_president_flag", "is_pres_elect_flag"]
+        [f"kw_{k}" for k in KEYWORD_GROUPS]
+        + ["pos_words", "neg_words", "text_len", "caps_ratio",
+           "exclaim", "question", "has_url", "word_count",
+           "log_likes", "log_reposts", "log_replies", "engagement_score",
+           "hour_sin", "hour_cos", "dow_sin", "dow_cos",
+           "is_market_hours", "is_president_flag",
+           "is_pres_elect_flag", "has_media_flag"]
         + list(mp_dummies.columns)
-        + existing_cat
-        + rolling_feat_cols
-        + daily_cat_cols
-        + existing_gdelt
+        + [c for c in cat_cols    if c in df.columns]   # LLM categories
+        + [c for c in gdelt_cols  if c in df.columns]   # GDELT geopolitical
     )
-
-    print(f"      Features: {len(feature_cols)} total  "
-          f"({len(existing_cat)} cat_*  |  "
-          f"{len(rolling_feat_cols)} rolling  |  "
-          f"{len(daily_cat_cols)} daily_cat  |  "
-          f"{len(existing_gdelt)} gdelt)")
-
     return df, feature_cols
 
 
@@ -332,23 +302,13 @@ def train_model(df: pd.DataFrame, feature_cols: list):
     X = labelled[feature_cols].fillna(0).astype(float).values
     y = labelled["high_impact"].astype(int).values
 
-    # ── Chronological 80/20 holdout split ────────────────
-    split_idx       = int(len(labelled) * 0.80)
-    X_train, X_test = X[:split_idx], X[split_idx:]
-    y_train, y_test = y[:split_idx], y[split_idx:]
+    if y.sum() < 5:
+        print("[WARN] Very few high-impact labels – results may be unreliable.")
 
-    test_start = labelled["datetime"].iloc[split_idx].date()
-    test_end   = labelled["datetime"].iloc[-1].date()
-    print(f"      Train: {len(X_train):,}  |  "
-          f"Test (holdout): {len(X_test):,}  |  "
-          f"Test period: {test_start} → {test_end}")
+    scaler = StandardScaler()
+    X_sc   = scaler.fit_transform(X)
 
-    # Fit scaler on train only
-    scaler     = StandardScaler()
-    X_train_sc = scaler.fit_transform(X_train)
-    X_test_sc  = scaler.transform(X_test)
-
-    scale_pos = max(1, int((y_train == 0).sum() / max(y_train.sum(), 1)))
+    scale_pos = max(1, int((y == 0).sum() / max(y.sum(), 1)))
     clf = XGBClassifier(
         n_estimators=400, max_depth=4, learning_rate=0.04,
         subsample=0.8, colsample_bytree=0.8,
@@ -356,99 +316,49 @@ def train_model(df: pd.DataFrame, feature_cols: list):
         eval_metric="logloss", random_state=42, n_jobs=-1,
     )
 
-    # Time-series CV on training set only
-    tscv      = TimeSeriesSplit(n_splits=5)
-    cv_scores = cross_val_score(clf, X_train_sc, y_train,
-                                cv=tscv, scoring="roc_auc")
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    cv_scores = cross_val_score(clf, X_sc, y, cv=cv, scoring="roc_auc")
 
-    clf.fit(X_train_sc, y_train)
+    clf.fit(X_sc, y)
+    proba = clf.predict_proba(X_sc)[:, 1]
 
-    # ── Top-50 特征筛选，重新训练 ─────────────────────────
-    importance_full = pd.DataFrame({
-        "feature":    feature_cols,
+    fpr, tpr, _   = roc_curve(y, proba)
+    prec, rec, _  = precision_recall_curve(y, proba)
+
+    importance = pd.DataFrame({
+        "feature": feature_cols,
         "importance": clf.feature_importances_,
     }).sort_values("importance", ascending=False)
 
-    print("      [Full model importance top-10]")
-    print(importance_full.head(10).to_string(index=False))
-
-    top50      = importance_full.head(50)["feature"].tolist()
-    top50_idx  = [feature_cols.index(f) for f in top50]
-
-    X_train_50 = X_train_sc[:, top50_idx]
-    X_test_50  = X_test_sc[:,  top50_idx]
-
-    clf50 = XGBClassifier(
-        n_estimators=400, max_depth=4, learning_rate=0.04,
-        subsample=0.8, colsample_bytree=0.8,
-        scale_pos_weight=scale_pos,
-        eval_metric="logloss", random_state=42, n_jobs=-1,
-    )
-    tscv50      = TimeSeriesSplit(n_splits=5)
-    cv_scores50 = cross_val_score(clf50, X_train_50, y_train,
-                                  cv=tscv50, scoring="roc_auc")
-    clf50.fit(X_train_50, y_train)
-
-    proba_train = clf50.predict_proba(X_train_50)[:, 1]
-    proba_test  = clf50.predict_proba(X_test_50)[:,  1]
-
-    roc_train = roc_auc_score(y_train, proba_train)
-    roc_test  = roc_auc_score(y_test,  proba_test)
-    ap_test   = average_precision_score(y_test, proba_test)
-    gap       = roc_train - roc_test
-
-    print(f"      [Top-50] Train AUC: {roc_train:.3f}  |  "
-          f"Test AUC: {roc_test:.3f}  |  "
-          f"Gap: {gap:.3f}  "
-          f"({'⚠️  overfit' if gap > 0.05 else '✅ OK'})")
-    print(f"      [Top-50] CV AUC: {cv_scores50.mean():.3f} "
-          f"± {cv_scores50.std():.3f}  |  "
-          f"per-fold: {[f'{s:.3f}' for s in cv_scores50]}")
-
-    fpr,  tpr,  _ = roc_curve(y_test,  proba_test)
-    prec, rec,  _ = precision_recall_curve(y_test, proba_test)
-
-    importance = pd.DataFrame({
-        "feature":    top50,
-        "importance": clf50.feature_importances_,
-    }).sort_values("importance", ascending=False)
-    print(importance.to_string(index=False))
-
-    all_proba              = np.concatenate([proba_train, proba_test])
-    labelled               = labelled.copy()
-    labelled["impact_proba"] = all_proba
-
+    labelled["impact_proba"] = proba
     metrics = dict(
-        roc_auc       = roc_test,
-        roc_auc_train = roc_train,
-        avg_precision = ap_test,
-        cv_auc_mean   = cv_scores50.mean(),
-        cv_auc_std    = cv_scores50.std(),
-        n_total       = len(labelled),
-        n_high        = int(y.sum()),
-        n_train       = len(X_train),
-        n_test        = len(X_test),
-        test_start    = str(test_start),
-        test_end      = str(test_end),
+        roc_auc          = roc_auc_score(y, proba),
+        avg_precision    = average_precision_score(y, proba),
+        cv_auc_mean      = cv_scores.mean(),
+        cv_auc_std       = cv_scores.std(),
+        n_total          = len(labelled),
+        n_high           = int(y.sum()),
         fpr=fpr, tpr=tpr, prec=prec, rec=rec,
     )
-
-    # ── 重新用 top-50 fit 一个新 scaler（供 predict 用）────
-    scaler50 = StandardScaler()
-    scaler50.fit(X_train[:, top50_idx])   # 注意：用原始未缩放的 X_train
-
-    return clf50, scaler50, labelled[["datetime", "impact_proba"]], importance, metrics
+    return clf, scaler, labelled[["datetime", "impact_proba"]], importance, metrics
 
 
-# ───────────────────���─────────────────────────
+# ─────────────────────────────────────────────
 # 5.  PIPELINE
 # ─────────────────────────────────────────────
 def run_pipeline():
-    print("[1/4] Loading posts …")
-    posts, cat_cols, gdelt_cols = load_posts()
+    print("[1/4] Loading posts from SQLite …")
+    posts, ticker_cols, cat_cols, gdelt_cols = load_posts(DB_PATH, TABLE_NAME)
+    print(f"      {len(posts):,} posts  |  "
+          f"{len(ticker_cols)} ticker cols  |  "
+          f"{len(cat_cols)} cat cols  |  "
+          f"{len(gdelt_cols)} gdelt cols")
 
-    print("[2/4] Computing returns & impact labels …")
-    posts = compute_returns(posts)
+    print("[2/4] Computing returns & impact labels from existing price data …")
+    posts = compute_returns(posts, ticker_cols)
+    n_high = int(posts["high_impact"].fillna(0).sum())
+    print(f"      Primary ticker: {PRIMARY_TICKER.upper()}  |  "
+          f"High-impact posts: {n_high:,}")
 
     print("[3/4] Engineering features …")
     posts, feature_cols = engineer_features(posts, cat_cols, gdelt_cols)
@@ -456,16 +366,12 @@ def run_pipeline():
     print("[4/4] Training XGBoost …")
     clf, scaler, proba_df, importance, metrics = train_model(posts, feature_cols)
 
-    # save model
-    save_model(clf, scaler, importance["feature"].tolist(), metrics)  # ← 加这行
-
-    # Merge predicted probabilities back onto full posts
+    # Merge probabilities back
     posts = posts.merge(proba_df, on="datetime", how="left")
 
-    print(f"\n✅  Pipeline done  |  "
-          f"Test ROC-AUC: {metrics['roc_auc']:.3f}  |  "
-          f"CV AUC: {metrics['cv_auc_mean']:.3f} ± {metrics['cv_auc_std']:.3f}  |  "
-          f"High-impact: {metrics['n_high']:,} / {metrics['n_total']:,}")
+    print(f"\n✅  Done  |  ROC-AUC: {metrics['roc_auc']:.3f}"
+          f"  |  CV AUC: {metrics['cv_auc_mean']:.3f} ± {metrics['cv_auc_std']:.3f}"
+          f"  |  High-impact: {metrics['n_high']:,} / {metrics['n_total']:,}")
 
     return posts, importance, metrics, cat_cols, gdelt_cols
 
@@ -473,13 +379,13 @@ def run_pipeline():
 # ─────────────────────────────────────────────
 # 6.  DASHBOARD
 # ─────────────────────────────────────────────
-BG      = "#1e1e2e"
-CARD_BG = "#2a2a3e"
-HIGH_C  = "#ff4b4b"
-LOW_C   = "#4b9eff"
-GOLD    = "#ffd700"
-GREEN   = "#7fff7f"
-PURPLE  = "#c084fc"
+BG       = "#1e1e2e"
+CARD_BG  = "#2a2a3e"
+HIGH_C   = "#ff4b4b"
+LOW_C    = "#4b9eff"
+GOLD     = "#ffd700"
+GREEN    = "#7fff7f"
+PURPLE   = "#c084fc"
 
 
 def kpi(label, value, color="#ffffff"):
@@ -494,10 +400,10 @@ def build_dashboard(posts, importance, metrics, cat_cols, gdelt_cols):
     app = dash.Dash(__name__, external_stylesheets=[dbc.themes.DARKLY])
     has_proba = "impact_proba" in posts.columns and posts["impact_proba"].notna().any()
 
-    # ── Static figures ──────────────────────────────────────
+    # ── Static figures ─────────────────────────────────────
 
-    # Feature importance (top 20)
-    top20   = importance.head(20)
+    # Feature importance
+    top20 = importance.head(20)
     fig_imp = px.bar(
         top20[::-1], x="importance", y="feature", orientation="h",
         title="Top-20 XGBoost Feature Importance",
@@ -506,38 +412,35 @@ def build_dashboard(posts, importance, metrics, cat_cols, gdelt_cols):
     ).update_layout(paper_bgcolor=CARD_BG, plot_bgcolor=CARD_BG,
                     showlegend=False, coloraxis_showscale=False)
 
-    # ROC curve (test set)
+    # ROC
     fig_roc = go.Figure([
         go.Scatter(x=metrics["fpr"], y=metrics["tpr"], mode="lines",
-                   name=f"Test AUC = {metrics['roc_auc']:.3f}",
+                   name=f"AUC = {metrics['roc_auc']:.3f}",
                    line=dict(color=HIGH_C, width=2)),
         go.Scatter(x=[0,1], y=[0,1], mode="lines",
                    line=dict(dash="dash", color="gray"), name="Random"),
-    ]).update_layout(
-        title=f"ROC Curve (holdout: {metrics['test_start']} → {metrics['test_end']})",
-        xaxis_title="FPR", yaxis_title="TPR",
-        template="plotly_dark", paper_bgcolor=CARD_BG, plot_bgcolor=CARD_BG)
+    ]).update_layout(title="ROC Curve", xaxis_title="FPR", yaxis_title="TPR",
+                     template="plotly_dark",
+                     paper_bgcolor=CARD_BG, plot_bgcolor=CARD_BG)
 
-    # Precision-Recall curve (test set)
+    # PR curve
     fig_pr = go.Figure([
         go.Scatter(x=metrics["rec"], y=metrics["prec"], mode="lines",
                    name=f"AP = {metrics['avg_precision']:.3f}",
                    line=dict(color=LOW_C, width=2)),
-    ]).update_layout(
-        title="Precision-Recall Curve (test set)",
-        xaxis_title="Recall", yaxis_title="Precision",
-        template="plotly_dark", paper_bgcolor=CARD_BG, plot_bgcolor=CARD_BG)
+    ]).update_layout(title="Precision-Recall Curve",
+                     xaxis_title="Recall", yaxis_title="Precision",
+                     template="plotly_dark",
+                     paper_bgcolor=CARD_BG, plot_bgcolor=CARD_BG)
 
-    # LLM category: avg score high vs low impact
-    lbl_mask = posts["high_impact"].notna()
-    existing_cat = [c for c in cat_cols if c in posts.columns]
-    if existing_cat and lbl_mask.any():
-        cat_df = (posts[lbl_mask]
-                  .groupby("high_impact")[existing_cat]
-                  .mean().T.reset_index())
-        cat_df.columns = (
-            ["category"] + [f"impact_{int(c)}" for c in cat_df.columns[1:]]
-        )
+    # Cat columns: avg score high vs low impact
+    labelled_mask = posts["high_impact"].notna()
+    if cat_cols and labelled_mask.any():
+        cat_df = posts[labelled_mask].groupby("high_impact")[
+            [c for c in cat_cols if c in posts.columns]
+        ].mean().T.reset_index()
+        cat_df.columns = (["category"] +
+                          [f"impact_{int(c)}" for c in cat_df.columns[1:]])
         cat_df["category"] = cat_df["category"].str.replace("cat_", "", regex=False)
         fig_cat = go.Figure()
         if "impact_0" in cat_df.columns:
@@ -557,31 +460,33 @@ def build_dashboard(posts, importance, metrics, cat_cols, gdelt_cols):
             title="LLM Categories (no data)", template="plotly_dark",
             paper_bgcolor=CARD_BG, plot_bgcolor=CARD_BG)
 
-    # Multi-ticker heatmap: mean |daily_ret| by impact label
-    ret_map = {t: f"{t}_daily_ret" for t in TICKERS if f"{t}_daily_ret" in posts.columns}
-    if ret_map and lbl_mask.any():
-        hmap_rows = []
-        for t, col in ret_map.items():
-            sub = posts[lbl_mask & posts[col].notna()]
+    # Multi-ticker return heatmap: mean |return| per ticker
+    ret_cols = {t: f"{t}_daily_ret" for t in TICKERS
+                if f"{t}_daily_ret" in posts.columns}
+    if ret_cols and labelled_mask.any():
+        hmap_data = []
+        for t, col in ret_cols.items():
+            sub = posts[labelled_mask & posts[col].notna()]
             if sub.empty:
                 continue
-            hmap_rows.append({
-                "ticker":              TICKER_NAMES.get(t, t),
-                "High Impact":         sub[sub["high_impact"] == 1][col].abs().mean(),
-                "Low Impact":          sub[sub["high_impact"] == 0][col].abs().mean(),
+            hmap_data.append({
+                "ticker": TICKER_NAMES.get(t, t),
+                "high_impact_mean_ret": sub[sub["high_impact"] == 1][col].abs().mean(),
+                "low_impact_mean_ret":  sub[sub["high_impact"] == 0][col].abs().mean(),
             })
-        hmap_df = pd.DataFrame(hmap_rows).set_index("ticker")
-        fig_hmap = go.Figure(go.Heatmap(
-            z=[hmap_df["High Impact"].values, hmap_df["Low Impact"].values],
+        hmap_df = pd.DataFrame(hmap_data).set_index("ticker")
+        fig_hmap = go.Figure(data=go.Heatmap(
+            z=[hmap_df["high_impact_mean_ret"].values,
+               hmap_df["low_impact_mean_ret"].values],
             x=hmap_df.index.tolist(),
             y=["High Impact Posts", "Low Impact Posts"],
             colorscale="RdYlGn_r",
-            text=[[f"{v:.3%}" if not np.isnan(v) else "—" for v in row]
-                  for row in [hmap_df["High Impact"].values,
-                               hmap_df["Low Impact"].values]],
+            text=[[f"{v:.3%}" for v in row]
+                  for row in [hmap_df["high_impact_mean_ret"].values,
+                               hmap_df["low_impact_mean_ret"].values]],
             texttemplate="%{text}",
         )).update_layout(
-            title="Mean Absolute Daily Return by Ticker — High vs Low Impact Posts",
+            title="Mean Absolute Daily Return by Ticker (High vs Low Impact Posts)",
             template="plotly_dark",
             paper_bgcolor=CARD_BG, plot_bgcolor=CARD_BG,
         )
@@ -590,40 +495,32 @@ def build_dashboard(posts, importance, metrics, cat_cols, gdelt_cols):
             title="Ticker Heatmap (no data)", template="plotly_dark",
             paper_bgcolor=CARD_BG, plot_bgcolor=CARD_BG)
 
-    # ── Layout ──────────────────────────────────────────────
+    # ── Layout ─────────────────────────────────────────────
     market_periods = sorted(posts["market_period"].dropna().unique().tolist())
-    ticker_options = [
-        {"label": f"{TICKER_NAMES.get(t, t)} ({t.upper()})", "value": t}
-        for t in TICKERS if f"{t}_daily_ret" in posts.columns
-    ]
 
     app.layout = dbc.Container(fluid=True, style={
         "backgroundColor": BG, "minHeight": "100vh", "padding": "24px"
     }, children=[
 
-        html.H1("🇺🇸 Trump Truth Social → Market Impact",
-                style={"color": "#fff", "textAlign": "center", "marginBottom": "8px"}),
-        html.P(
-            f"Primary: {PRIMARY_TICKER.upper()}  ·  "
-            f"Train: {metrics['n_train']:,} posts  ·  "
-            f"Test holdout: {metrics['n_test']:,} posts  "
-            f"({metrics['test_start']} → {metrics['test_end']})",
-            style={"color": "#888", "textAlign": "center", "marginBottom": "24px"},
-        ),
+        html.H1("🇺🇸 Trump Truth Social → Market Impact Dashboard",
+                style={"color": "#fff", "textAlign": "center",
+                       "marginBottom": "8px"}),
+        html.P(f"Primary ticker: {PRIMARY_TICKER.upper()} · "
+               f"Impact threshold: {THRESHOLDS['default']*100:.1f}%",
+               style={"color": "#888", "textAlign": "center",
+                      "marginBottom": "24px"}),
 
-        # ── KPIs ────────────────────────────────────────────
+        # ── KPIs ───────────────────────────────────────────
         dbc.Row([
-            dbc.Col(kpi("Total Posts",        f"{len(posts):,}"),                 md=2),
-            dbc.Col(kpi("High-Impact Posts",  f"{metrics['n_high']:,}", HIGH_C),  md=2),
-            dbc.Col(kpi("Test ROC-AUC",       f"{metrics['roc_auc']:.3f}", GOLD), md=2),
-            dbc.Col(kpi("Train ROC-AUC",      f"{metrics['roc_auc_train']:.3f}", PURPLE), md=2),
-            dbc.Col(kpi("CV AUC (TS 5-fold)",
+            dbc.Col(kpi("Total Posts",        f"{len(posts):,}"),              md=3),
+            dbc.Col(kpi("High-Impact Posts",  f"{metrics['n_high']:,}", HIGH_C), md=3),
+            dbc.Col(kpi("ROC-AUC",            f"{metrics['roc_auc']:.3f}", GOLD), md=3),
+            dbc.Col(kpi("CV AUC (5-fold)",
                         f"{metrics['cv_auc_mean']:.3f} ± {metrics['cv_auc_std']:.3f}",
-                        GREEN), md=2),
-            dbc.Col(kpi("Avg Precision",      f"{metrics['avg_precision']:.3f}", LOW_C), md=2),
+                        GREEN), md=3),
         ], className="mb-4"),
 
-        # ── Filters ─────────────────────────────────────────
+        # ── Filters ────────────────────────────────────────
         dbc.Row([
             dbc.Col([
                 html.Label("Market Period", style={"color": "#ccc"}),
@@ -649,10 +546,12 @@ def build_dashboard(posts, importance, metrics, cat_cols, gdelt_cols):
                 ),
             ], md=3),
             dbc.Col([
-                html.Label("Ticker (return plots)", style={"color": "#ccc"}),
+                html.Label("Ticker (for return plot)", style={"color": "#ccc"}),
                 dcc.Dropdown(
                     id="dd-ticker",
-                    options=ticker_options,
+                    options=[{"label": f"{TICKER_NAMES.get(t,t)} ({t.upper()})",
+                              "value": t} for t in TICKERS
+                             if f"{t}_daily_ret" in posts.columns],
                     value=PRIMARY_TICKER, clearable=False,
                     style={"backgroundColor": "#333", "color": "#000"},
                 ),
@@ -664,32 +563,32 @@ def build_dashboard(posts, importance, metrics, cat_cols, gdelt_cols):
             ], md=3),
         ], className="mb-4"),
 
-        # ── Timeline ────────────────────────────────────────
+        # ── Timeline ───────────────────────────────────────
         dbc.Row([dbc.Col(dcc.Graph(id="g-timeline"), md=12)], className="mb-4"),
 
-        # ── Ticker heatmap (full width, static) ─────────────
+        # ── Multi-ticker heatmap (full width) ──────────────
         dbc.Row([dbc.Col(dcc.Graph(figure=fig_hmap), md=12)], className="mb-4"),
 
-        # ── LLM category bar + return box ───────────────────
+        # ── LLM category bar + returns box ─────────────────
         dbc.Row([
-            dbc.Col(dcc.Graph(figure=fig_cat),  md=6),
-            dbc.Col(dcc.Graph(id="g-returns"),  md=6),
+            dbc.Col(dcc.Graph(figure=fig_cat),     md=6),
+            dbc.Col(dcc.Graph(id="g-returns"),     md=6),
         ], className="mb-4"),
 
-        # ── Period distribution + intraday scatter ───────────
+        # ── Market period dist + immediate vs sustained ────
         dbc.Row([
             dbc.Col(dcc.Graph(id="g-period-dist"), md=6),
             dbc.Col(dcc.Graph(id="g-intraday"),    md=6),
         ], className="mb-4"),
 
-        # ── Model evaluation charts ──────────────────────────
+        # ── Model charts ───────────────────────────────────
         dbc.Row([
             dbc.Col(dcc.Graph(figure=fig_imp), md=4),
             dbc.Col(dcc.Graph(figure=fig_roc), md=4),
             dbc.Col(dcc.Graph(figure=fig_pr),  md=4),
         ], className="mb-4"),
 
-        # ── Top posts table ──────────────────────────────────
+        # ── Top posts table ────────────────────────────────
         dbc.Row([
             dbc.Col([
                 html.H4("Top Posts by Predicted Impact Probability",
@@ -699,13 +598,13 @@ def build_dashboard(posts, importance, metrics, cat_cols, gdelt_cols):
         ]),
     ])
 
-    # ── Callback ────────────────────────────────────────────
+    # ── Callback ───────────────────────────────────────────
     @app.callback(
-        Output("g-timeline",    "figure"),
-        Output("g-returns",     "figure"),
-        Output("g-period-dist", "figure"),
-        Output("g-intraday",    "figure"),
-        Output("tbl-posts",     "children"),
+        Output("g-timeline",   "figure"),
+        Output("g-returns",    "figure"),
+        Output("g-period-dist","figure"),
+        Output("g-intraday",   "figure"),
+        Output("tbl-posts",    "children"),
         Input("dd-period",  "value"),
         Input("dd-impact",  "value"),
         Input("dd-ticker",  "value"),
@@ -722,15 +621,13 @@ def build_dashboard(posts, importance, metrics, cat_cols, gdelt_cols):
             dff = dff[dff["impact_proba"].fillna(0) >= sel_proba]
 
         dff["snippet"] = dff["content"].str[:100] + "…"
-        daily_col = f"{sel_ticker}_daily_ret" \
-                    if sel_ticker and f"{sel_ticker}_daily_ret" in dff.columns \
-                    else f"{PRIMARY_TICKER}_daily_ret"
+        ret_col = f"{sel_ticker}_daily_ret" if sel_ticker else f"{PRIMARY_TICKER}_daily_ret"
 
-        # Timeline
+        # ── Timeline ───────────────────────────────────────
         fig_tl = go.Figure()
         for h, grp in dff.groupby("high_impact", dropna=False):
             col = HIGH_C if h == 1 else LOW_C
-            sym = "star"  if h == 1 else "circle"
+            sym = "star" if h == 1 else "circle"
             lbl = "High Impact" if h == 1 else "Low Impact"
             fig_tl.add_trace(go.Scatter(
                 x=grp["datetime"],
@@ -738,10 +635,11 @@ def build_dashboard(posts, importance, metrics, cat_cols, gdelt_cols):
                 mode="markers",
                 marker=dict(color=col, symbol=sym,
                             size=9 if h == 1 else 5, opacity=0.75),
-                name=lbl, text=grp["snippet"],
+                name=lbl,
+                text=grp["snippet"],
                 hovertemplate=(
                     "<b>%{text}</b><br>%{x|%Y-%m-%d %H:%M UTC}"
-                    "<br>Δ %{y:.2f}%<extra></extra>"
+                    "<br>S&P Δ: %{y:.2f}%<extra></extra>"
                 ),
             ))
         fig_tl.update_layout(
@@ -752,53 +650,59 @@ def build_dashboard(posts, importance, metrics, cat_cols, gdelt_cols):
             legend=dict(orientation="h", y=1.05),
         )
 
-        # Return box by market_period
-        dff_box = dff[dff[daily_col].notna()].copy() if daily_col in dff.columns else dff.copy()
+        # ── Returns box by market_period ───────────────────
+        dff_box = dff[dff[ret_col].notna()].copy() if ret_col in dff.columns else dff.copy()
         dff_box["Impact"] = dff_box["high_impact"].map(
             {1.0: "High", 0.0: "Low"}).fillna("Unlabelled")
         fig_ret = px.box(
-            dff_box, x="market_period",
-            y=(dff_box[daily_col] * 100) if daily_col in dff_box.columns else None,
+            dff_box,
+            x="market_period",
+            y=(dff_box[ret_col] * 100) if ret_col in dff_box.columns else None,
             color="Impact",
             color_discrete_map={"High": HIGH_C, "Low": LOW_C, "Unlabelled": "#888"},
-            title=f"{TICKER_NAMES.get(sel_ticker, sel_ticker)} Daily Return by Period",
+            title=f"{TICKER_NAMES.get(sel_ticker, sel_ticker)} Daily Return by Market Period",
             labels={"y": "Daily Return %", "market_period": "Period"},
             template="plotly_dark",
         ).update_layout(paper_bgcolor=CARD_BG, plot_bgcolor=CARD_BG)
 
-        # Market period distribution
+        # ── Market period distribution ──────────────────────
         pc = dff["market_period"].value_counts().reset_index()
         pc.columns = ["period", "count"]
         fig_pd = px.bar(
             pc, x="period", y="count", color="period",
-            title="Posts by Market Period", template="plotly_dark",
+            title="Posts by Market Period",
+            template="plotly_dark",
             color_discrete_sequence=px.colors.qualitative.Pastel,
-        ).update_layout(paper_bgcolor=CARD_BG, plot_bgcolor=CARD_BG, showlegend=False)
+        ).update_layout(paper_bgcolor=CARD_BG, plot_bgcolor=CARD_BG,
+                        showlegend=False)
 
-        # Intraday scatter: immediate (±5min) vs sustained (1hr) — market hours only
+        # ── Intraday: immediate vs sustained (market hours) ─
         imm_col = f"{sel_ticker}_immediate_ret"
         sus_col = f"{sel_ticker}_sustained_ret"
         fig_id  = go.Figure()
         if imm_col in dff.columns and sus_col in dff.columns:
-            mh = dff[dff["during_market_hours"]].copy()
+            mh = dff[dff["during_market_hours"] == True].copy()
             mh["Impact"] = mh["high_impact"].map(
                 {1.0: "High", 0.0: "Low"}).fillna("Unlabelled")
             for lbl, col in [("High", HIGH_C), ("Low", LOW_C)]:
                 sub = mh[mh["Impact"] == lbl]
                 fig_id.add_trace(go.Scatter(
-                    x=sub[imm_col] * 100, y=sub[sus_col] * 100,
+                    x=sub[imm_col] * 100,
+                    y=sub[sus_col] * 100,
                     mode="markers",
                     marker=dict(color=col, size=6, opacity=0.7),
-                    name=lbl, text=sub["snippet"],
+                    name=lbl,
+                    text=sub["snippet"],
                     hovertemplate=(
                         "<b>%{text}</b><br>"
-                        "Immediate ±5min: %{x:.2f}%<br>"
-                        "Sustained 1hr:  %{y:.2f}%<extra></extra>"
+                        "Immediate (±5min): %{x:.2f}%<br>"
+                        "Sustained (1hr):  %{y:.2f}%<extra></extra>"
                     ),
                 ))
             fig_id.update_layout(
-                title=(f"{TICKER_NAMES.get(sel_ticker, sel_ticker)}: "
-                       f"Immediate (±5min) vs Sustained (1hr) — market hours only"),
+                title=f"{TICKER_NAMES.get(sel_ticker,sel_ticker)}: "
+                      f"Immediate (±5min) vs Sustained (1hr) Move<br>"
+                      f"<sup>Market-hours posts only</sup>",
                 xaxis_title="Immediate Reaction %",
                 yaxis_title="Sustained Move %",
                 template="plotly_dark",
@@ -807,25 +711,28 @@ def build_dashboard(posts, importance, metrics, cat_cols, gdelt_cols):
         else:
             fig_id.update_layout(
                 title="Intraday chart (5-min/1-hr cols not available for this ticker)",
-                template="plotly_dark", paper_bgcolor=CARD_BG, plot_bgcolor=CARD_BG)
+                template="plotly_dark",
+                paper_bgcolor=CARD_BG, plot_bgcolor=CARD_BG)
 
-        # Top posts table
-        tbl_base = ["datetime", "content", "market_period", "primary_ret", "high_impact"]
+        # ── Top posts table ─────────────────────────────────
+        tbl_base = ["datetime", "content", "market_period",
+                    "primary_ret", "high_impact"]
         if has_proba:
             tbl_base.append("impact_proba")
+        # Add selected ticker intraday cols if present
         for suffix in ["_at_post", "_5min_after", "_1hr_after", "_daily_ret"]:
             c = f"{sel_ticker}{suffix}"
             if c in dff.columns:
                 tbl_base.append(c)
-        tbl_cols = [c for c in tbl_base if c in dff.columns]
 
+        tbl_cols = [c for c in tbl_base if c in dff.columns]
         tbl = (dff[tbl_cols]
                .sort_values("impact_proba" if has_proba else "primary_ret",
                             ascending=False, na_position="last")
                .head(50).copy())
 
         tbl["datetime"]    = tbl["datetime"].astype(str).str[:19]
-        tbl["content"]     = tbl["content"].str[:130]
+        tbl["content"]     = tbl["content"].str[:120]
         tbl["primary_ret"] = tbl["primary_ret"].apply(
             lambda x: f"{x*100:.2f}%" if pd.notna(x) else "—")
         if has_proba:
@@ -855,157 +762,12 @@ def build_dashboard(posts, importance, metrics, cat_cols, gdelt_cols):
         return fig_tl, fig_ret, fig_pd, fig_id, table
 
     return app
-# ─────────────────────────────────────────────
-# 6.  SAVE MODEL
-# ─────────────────────────────────────────────
-import joblib, json
-from pathlib import Path
-
-MODEL_DIR = Path(__file__).parent / "model_artifacts"
-
-
-def save_model(clf, scaler, feature_cols: list, metrics: dict):
-    MODEL_DIR.mkdir(parents=True, exist_ok=True)
-    joblib.dump(clf,    MODEL_DIR / "xgb_model.pkl")
-    joblib.dump(scaler, MODEL_DIR / "scaler.pkl")
-    with open(MODEL_DIR / "feature_cols.json", "w") as f:
-        json.dump(feature_cols, f, indent=2)
-    save_metrics = {k: v for k, v in metrics.items()
-                    if k not in ("fpr", "tpr", "prec", "rec")}
-    with open(MODEL_DIR / "metrics.json", "w") as f:
-        json.dump(save_metrics, f, indent=2)
-    print(f"      💾 Model saved → {MODEL_DIR}")
 
 
 # ─────────────────────────────────────────────
-# 7.  PREDICT NEW POSTS
+# ENTRY POINT
 # ─────────────────────────────────────────────
-def predict_new_posts(new_posts: pd.DataFrame) -> pd.DataFrame:
-    """
-    把新帖子喂进已保存的模型，返回带 impact_proba 的 DataFrame。
-
-    参数：
-        new_posts : 直接从 load_posts() 拿到的原始 DataFrame，
-                    或任何包含相同列结构的 DataFrame。
-
-    返回：
-        result    : 原始列 + impact_proba，按概率降序排列。
-
-    用法示例：
-        posts, cat_cols, gdelt_cols = load_posts()
-        # 只取最近 7 天
-        recent = posts[posts["datetime"] >= pd.Timestamp.now(tz="UTC")
-                       - pd.Timedelta(days=7)]
-        result = predict_new_posts(recent)
-        print(result[["datetime", "content", "impact_proba"]].head(10))
-    """
-    # ── 1. 加载模型 ──────────────────────────────────────
-    if not (MODEL_DIR / "xgb_model.pkl").exists():
-        raise FileNotFoundError(
-            f"模型文件不存在: {MODEL_DIR}\n先运行 run_pipeline() 训练并保存模型。"
-        )
-
-    clf     = joblib.load(MODEL_DIR / "xgb_model.pkl")
-    scaler  = joblib.load(MODEL_DIR / "scaler.pkl")
-    with open(MODEL_DIR / "feature_cols.json") as f:
-        feature_cols = json.load(f)
-
-    print(f"      📦 Model loaded from {MODEL_DIR}")
-    print(f"      📋 Expected features: {len(feature_cols)}")
-
-    # ── 2. 特征工程（和训练时完全一致）──────────────────
-    _, cat_cols, gdelt_cols = load_posts.__wrapped__() \
-        if hasattr(load_posts, "__wrapped__") else (None, None, None)
-
-    # 安全获取 cat_cols / gdelt_cols（直接从列名推断，不重新查 DB）
-    cat_cols_infer   = [c for c in new_posts.columns if c in CAT_COLS]
-    gdelt_cols_infer = [c for c in new_posts.columns if c in GDELT_COLS]
-
-    df, _ = engineer_features(new_posts.copy(), cat_cols_infer, gdelt_cols_infer)
-
-    # ── 3. 对齐特征列（训练时有的列，预测时可能没有） ───
-    for c in feature_cols:
-        if c not in df.columns:
-            df[c] = 0.0
-
-    X     = df[feature_cols].fillna(0).astype(float).values
-    X_sc  = scaler.transform(X)
-
-    # ── 4. 预测 ──────────────────────────────────────────
-    df["impact_proba"] = clf.predict_proba(X_sc)[:, 1]
-
-    high_risk = (df["impact_proba"] >= 0.6).sum()
-    print(f"      🔍 Predicted {len(df):,} posts  |  "
-          f"High-risk (≥0.6): {high_risk:,}  |  "
-          f"Max proba: {df['impact_proba'].max():.3f}")
-
-    # ── 5. 返回结果，按概率降序 ───────────────────────────
-    keep_cols = ["datetime", "content", "market_period",
-                 "during_market_hours", "impact_proba"]
-    keep_cols = [c for c in keep_cols if c in df.columns]
-
-    result = (df[keep_cols]
-              .sort_values("impact_proba", ascending=False)
-              .reset_index(drop=True))
-
-    return result
-
-# ─────────────────────────────────────────────
-def predict_latest(days: int = 7, fallback_n: int = 50) -> pd.DataFrame:
-    """
-    加载最新数据并预测，无需重新训练。
-
-    参数：
-        days       : 取最近多少天的帖子，默认 7 天
-        fallback_n : 如果最近 days 天没有数据，改取最新 N 条，默认 50
-
-    返回：
-        result : 带 impact_proba 的 DataFrame，按概率降序
-
-    外部调用示例：
-        from tests.soy_test.most_influence_detect import predict_latest
-        result = predict_latest(days=3)
-        print(result.head(10))
-    """
-    raw, _, _ = load_posts()
-
-    cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=days)
-    recent = raw[raw["datetime"] >= cutoff].copy()
-
-    if recent.empty:
-        print(f"      ⚠️  No posts in last {days} days, "
-              f"using latest {fallback_n} posts instead")
-        recent = raw.sort_values("datetime").tail(fallback_n).copy()
-
-    print(f"      Input posts : {len(recent):,}  "
-          f"({recent['datetime'].min().date()} → "
-          f"{recent['datetime'].max().date()})")
-
-    result = predict_new_posts(recent)
-
-    print(f"\n      {'datetime':<22} {'proba':>6}  {'market_period':<18}  content")
-    print(f"      {'-'*22} {'-'*6}  {'-'*18}  {'-'*50}")
-    for _, row in result.head(10).iterrows():
-        dt      = str(row["datetime"])[:19]
-        proba   = f"{row['impact_proba']:.3f}"
-        period  = str(row.get("market_period", ""))[:18]
-        content = str(row.get("content", ""))[:60].replace("\n", " ")
-        print(f"      {dt:<22} {proba:>6}  {period:<18}  {content}")
-
-    return result
-
-
 if __name__ == "__main__":
-    # ── 1. 训练并保存模型 ─────────────────────────────────
     posts, importance, metrics, cat_cols, gdelt_cols = run_pipeline()
-
-    # ── 2. 测试：喂入最新数据 ────────────────────────────
-    print("\n" + "="*55)
-    print("🧪  PREDICT TEST — latest 7 days")
-    print("="*55)
-    predict_latest(days=7)
-
-    # ── 3. 启动 Dashboard ────────────────────────────────
-    # print("\n🚀  Starting dashboard on http://0.0.0.0:8050 …")
-    # app = build_dashboard(posts, importance, metrics, cat_cols, gdelt_cols)
-    # app.run(debug=False, host="0.0.0.0", port=8050)
+    app = build_dashboard(posts, importance, metrics, cat_cols, gdelt_cols)
+    app.run(debug=False, host="0.0.0.0", port=8050)
