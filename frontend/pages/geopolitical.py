@@ -1,27 +1,26 @@
-"""pages/geopolitical.py — Geopolitical (GDELT) tab"""
+"""pages/geopolitical.py — Geopolitical signals tab"""
 import streamlit as st
+import pandas as pd
 from frontend.data.api_client import get_gdelt_summary, get_gdelt_timeseries
-from frontend.components.charts import gdelt_tone_bar, gdelt_breakdown_bar
+from frontend.components.charts import gdelt_tone_chart
 
 def render(T: dict):
-    st.caption("GDELT global event database · updates weekly")
+    st.subheader("Geopolitical Signals (GDELT)")
 
-    gdelt = get_gdelt_summary()
-    gt_df = get_gdelt_timeseries(8)
+    summary = get_gdelt_summary()
+    df_trend = get_gdelt_timeseries(weeks=8)
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Military events",  f"{gdelt['military_events']:,}",
-              delta="+34% vs avg", delta_color="inverse")
-    c2.metric("Verbal conflict",  f"{gdelt['verbal_conflict']:,}",
-              delta="+18% vs avg", delta_color="inverse")
-    c3.metric("Avg global tone",  f"{gdelt['avg_tone']:.2f}",
-              help="Negative = more conflict globally")
+    if not summary or df_trend.empty:
+        st.warning("GDELT data is not yet available. Please check back later.")
+        return
 
-    st.divider()
-    st.subheader("Global tone over time")
-    st.plotly_chart(gdelt_tone_bar(gt_df), use_container_width=True)
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total Events", f"{summary.get('total_events', 0):,}")
+    col2.metric("Avg Tone", f"{summary.get('avg_tone', 0):.2f}")
+    col3.metric("Goldstein Avg", f"{summary.get('goldstein_avg', 0):.2f}")
 
-    st.subheader(f"Signal breakdown · {gdelt['week_of']}")
-    st.plotly_chart(gdelt_breakdown_bar(gdelt), use_container_width=True)
+    if "interpretation" in summary:
+        st.info(summary["interpretation"])
 
-    st.info(f"**{T['interp']}:** {gdelt['interpretation']}")
+    st.plotly_chart(gdelt_tone_chart(df_trend), use_container_width=True)
+    st.dataframe(df_trend)
