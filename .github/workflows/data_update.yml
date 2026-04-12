@@ -1,0 +1,31 @@
+name: Weekly Data Update
+
+on:
+  schedule:
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+
+jobs:
+  update-dataset:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install pandas datasets huggingface_hub apscheduler
+
+      - name: Initialize database (if missing)
+        run: python backend_database/init_db.py
+
+      - name: Run daily update (one-off)
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: python backend_database/daily_update.py --once

@@ -1,49 +1,68 @@
+"""FastAPI application for TrumpPulse."""
 from fastapi import FastAPI
 from pydantic import BaseModel
 import sqlite3
 from datetime import datetime, timezone
+import sys
+import os
+import threading
 
-from data.sample import get_sample_data
-from app.services.sentiment_service import analyze_dataset
-from app.models.qa import simple_qa
+# Add project root to Python path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+from backend_database.embeddings import get_search_engine
+from backend_database.init_db import DEFAULT_DB_PATH
+
+# Ensure ChromaDB index is populated on startup (non‑blocking)
+def _ensure_index():
+    engine = get_search_engine(DEFAULT_DB_PATH)
+    count = engine.collection.count()
+    print(f"[STARTUP] DB path: {DEFAULT_DB_PATH}, Chroma count: {count}")
+    if count == 0:
+        print("[STARTUP] Collection is empty. Building index in background...")
+        engine.build_index(force=True)
+        print("[STARTUP] Index built. New count:", engine.collection.count())
+
+threading.Thread(target=_ensure_index, daemon=True).start()
 
 app = FastAPI()
 
-# Add monitoring router AFTER app is created
+# Add monitoring router
 from app.api import monitoring
 app.include_router(monitoring.router)
 
-# Load sample data at startup
-texts = get_sample_data()
-sentiments = analyze_dataset(texts)
+# Initialize search engine (singleton) for endpoints
+engine = get_search_engine(DEFAULT_DB_PATH)
 
-# Database path
-DB_PATH = "data/trump_pulse.db"
-
-# ---------- Existing Endpoints ----------
+# ---------- Health Endpoint ----------
 @app.get("/")
 def health():
-    return {"status": "running"}
+    return {"status": "running", "database": DEFAULT_DB_PATH}
 
-@app.get("/sentiments")
-def get_sentiments():
-    return sentiments
 
+# ---------- Q&A Endpoint (Semantic Search) ----------
 @app.get("/qa")
-def qa(query: str):
-    return simple_qa(query, texts)
+def qa(query: str, limit: int = 5):
+    """Semantic search over Trump posts with similarity scores."""
+    try:
+        results = engine.search(query, top_k=limit)
+        return {"query": query, "results": results}
+    except Exception as e:
+        return {"error": str(e)}
 
-# ---------- New Feedback Endpoint ----------
+
+# ---------- Feedback Endpoint ----------
 class FeedbackRequest(BaseModel):
     query: str
     response: str
     rating: int
     comment: str = ""
 
+
 @app.post("/feedback")
 def submit_feedback(feedback: FeedbackRequest):
     """Store user feedback for LLM evaluation."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DEFAULT_DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS feedback (
@@ -62,3 +81,33 @@ def submit_feedback(feedback: FeedbackRequest):
     conn.commit()
     conn.close()
     return {"status": "feedback recorded"}
+
+
+# ---------- Debug Endpoints ----------
+@app.get("/debug/config")
+def debug_config():
+    return {
+        "API_URL": os.environ.get("API_URL", "not set"),
+        "TRUMPPULSE_DATA_DIR": os.environ.get("TRUMPPULSE_DATA_DIR", "not set"),
+        "CHROMA_DB_PATH": os.environ.get("CHROMA_DB_PATH", "not set"),
+    }
+
+
+@app.get("/debug/status")
+def debug_status():
+    from backend_database.embeddings import CHROMA_PATH
+    return {
+        "db_path": engine.db_path,
+        "db_exists": os.path.exists(engine.db_path),
+        "chroma_path": CHROMA_PATH,
+        "chroma_count": engine.collection.count(),
+    }
+
+
+@app.get("/debug/paths")
+def debug_paths():
+    return {
+        "TRUMPPULSE_DATA_DIR": os.environ.get("TRUMPPULSE_DATA_DIR", "not set"),
+        "DEFAULT_DB_PATH": DEFAULT_DB_PATH,
+        "db_exists": os.path.exists(DEFAULT_DB_PATH),
+    }
