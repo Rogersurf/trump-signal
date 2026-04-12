@@ -225,7 +225,22 @@ def ask_question(query: str, top_k: int = 4) -> list:
     except:
         pass
 #change to simple ollama --> embeddings let sees 
-    # keyword search บน real data
+    # Semantic search fallback
+    try:
+        from backend_database.embeddings import get_search_engine
+        engine = get_search_engine()
+        results = engine.search(query, top_k=top_k)
+        if results:
+            return [
+                {
+                    "post": r.get("post", {}),
+                    "score": round(float(r.get("score", 0)) / 100, 2)
+                }
+                for r in results
+            ]
+    except Exception as e:
+        print(f"semantic search error: {e}")
+
     if _USE_REAL:
         try:
             df = _client.get_top_posts()
