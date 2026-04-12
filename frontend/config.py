@@ -8,8 +8,6 @@ REPLACE: API_URL เมื่อ deploy ขึ้น cloud
 # REPLACE: เปลี่ยนเป็น URL จริงตอน deploy เช่น https://trumpsignal.app/api
 API_URL = "http://localhost:8000"
 
-LANGUAGES = ["English", "Thai", "Chinese"]
-
 TIMEZONES = {
     "UTC":               0,
     "Bangkok (UTC+7)":   7,
