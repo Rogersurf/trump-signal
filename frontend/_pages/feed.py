@@ -32,34 +32,67 @@ CAT_SIGNALS = {
     "De-escalating":        ("🟢", "+0.11%"),
 }
 
-# Per-interval accuracy — shorter = more accurate
-# REPLACE: use real backtested accuracy from ML model
-INTERVAL_META = {
-    "5 min":  {"key": "t5",  "accuracy": 0.68, "note": "High confidence — short window"},
-    "10 min": {"key": "t10", "accuracy": 0.63, "note": "Good confidence"},
-    "30 min": {"key": "t30", "accuracy": 0.57, "note": "Moderate — more uncertainty"},
-    "60 min": {"key": "t60", "accuracy": 0.51, "note": "Low confidence — long window"},
-}
+# ── Impact prediction — load Chenghao's model ────────────────────────────────
+# Loads once, cached so we don't reload on every post render
+_impact_cache: dict = {}   # post_id → impact_proba
 
-def _mock_ml(text, category):
+def _load_impact_predictions(days: int = 30) -> dict:
     """
-    REPLACE: GET {API_URL}/predict?text=...&stock=...
-    Must return: {t5, t10, t30, t60} as % change predictions
+    Call predict_latest() from Chenghao's model_predict.py.
+    Returns dict of {content_snippet → impact_proba} for quick lookup.
+    Only runs on market-hours posts (model is trained on those only).
+    Falls back to empty dict silently if model files not found yet.
     """
-    import random, hashlib
-    random.seed(int(hashlib.md5(text[:20].encode()).hexdigest()[:8], 16))
-    neg = ["Threatening intl.", "Attacking opposition"]
-    m   = -1 if category in neg else 1
-    return {
-        "t5":  round(m * random.uniform(0.05, 0.25), 2),
-        "t10": round(m * random.uniform(0.08, 0.35), 2),
-        "t30": round(m * random.uniform(0.10, 0.50), 2),
-        "t60": round(m * random.uniform(0.12, 0.65), 2),
-    }
+    global _impact_cache
+    if _impact_cache:
+        return _impact_cache
+    try:
+        from backend.model_predict import predict_latest
+        df = predict_latest(days=days)
+        # key by first 80 chars of content — matches what feed uses as text
+        _impact_cache = {
+            str(row.get("content", ""))[:80]: float(row.get("impact_proba", 0.0))
+            for _, row in df.iterrows()
+        }
+    except FileNotFoundError:
+        # Model not trained yet — silent fallback
+        pass
+    except Exception as e:
+        print(f"[feed] impact model error: {e}")
+    return _impact_cache
+
+
+def _get_impact_badge(proba: float | None, during_market: bool) -> str:
+    """
+    Convert impact_proba to a badge string for display.
+    Only meaningful for market-hours posts.
+    """
+    if not during_market:
+        return ""
+    if proba is None:
+        return ""
+    if proba >= 0.6:
+        return "⚠️ HIGH IMPACT"
+    elif proba >= 0.4:
+        return "🟡 MODERATE"
+    else:
+        return "✅ LOW IMPACT"
+
+
+def _get_impact_color(proba: float | None) -> str:
+    if proba is None:
+        return "#888"
+    if proba >= 0.6:
+        return "#E24B4A"
+    elif proba >= 0.4:
+        return "#BA7517"
+    return "#1D9E75"
+
 
 def _get_clock(tz_offset: int) -> str:
     now = datetime.utcnow() + timedelta(hours=tz_offset)
     return now.strftime("%H:%M:%S")
+
 
 def _get_market_status(tz_offset: int) -> tuple:
     """Check if US market is open (9:30–16:00 ET = UTC-4)"""
@@ -97,7 +130,7 @@ def render(T: dict, tz_offset: int):
     st.divider()
 
     # ── Controls ──────────────────────────────────────────────────────────────
-    c1, c2, c3, c4 = st.columns([2, 2, 2, 2])
+    c1, c2, c3 = st.columns([2, 2, 2])
     with c1:
         start_date = st.date_input(
             T["select_date"],
@@ -120,12 +153,6 @@ def render(T: dict, tz_offset: int):
             options=list(STOCK_OPTIONS.keys()),
             format_func=lambda x: STOCK_OPTIONS[x],
         )
-    with c4:
-        interval = st.radio(
-            "ML prediction interval",
-            options=list(INTERVAL_META.keys()),
-            horizontal=True,
-        )
 
     posts = get_posts(str(start_date), str(end_date))
     if posts.empty:
@@ -133,21 +160,15 @@ def render(T: dict, tz_offset: int):
         st.caption("Note: dataset covers up to April 2026. Select dates within that range.")
         return
 
-    # Show interval accuracy info
-    meta = INTERVAL_META[interval]
-    acc  = meta["accuracy"] * 100
-    acc_color = "#1D9E75" if acc >= 65 else "#BA7517" if acc >= 58 else "#E24B4A"
-    st.markdown(
-        f'<div style="background:#f8f6f1;border-radius:6px;padding:8px 14px;margin-bottom:12px;'
-        f'display:inline-block">'
-        f'Showing <b>{interval}</b> predictions · '
-        f'Model accuracy: <b style="color:{acc_color}">{acc:.0f}%</b> · '
-        f'<span style="color:#888">{meta["note"]}</span>'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
+    # Load impact predictions once for the whole feed
+    impact_map = _load_impact_predictions(days=30)
+    has_model  = bool(impact_map)
 
     st.caption(f"{len(posts)} posts · UTC{tz_offset:+d} · {STOCK_OPTIONS[stock_key]}")
+    if has_model:
+        st.caption("⚠️ Impact badge = XGBoost binary classifier · market-hours posts only · threshold ≥ 0.6")
+    else:
+        st.caption("ℹ️ Impact model not loaded — run `backend.model_training` first to enable predictions")
 
     for _, row in posts.iterrows():
         sentiment = row.get("sentiment", "NEUTRAL")
@@ -155,11 +176,11 @@ def render(T: dict, tz_offset: int):
         bg, fg    = SENTIMENT_BADGE.get(sentiment, ("#F1EFE8", "#444441"))
         text      = str(row.get("text", ""))
 
-        # Stock impact
+        # Historical stock impact (real data from dataset)
         try:
             b = float(row.get(f"{stock_key}_5min_before", row.get("sp500_5min_before", 0)))
             a = float(row.get(f"{stock_key}_5min_after",  row.get("sp500_5min_after",  0)))
-            impact = round((a - b) / b * 100, 2) if b != 0 else 0
+            impact       = round((a - b) / b * 100, 2) if b != 0 else 0
             impact_str   = f"+{impact:.2f}%" if impact >= 0 else f"{impact:.2f}%"
             impact_color = "#1D9E75" if impact >= 0 else "#E24B4A"
         except:
@@ -170,10 +191,13 @@ def render(T: dict, tz_offset: int):
         except:
             time_str = str(row.get("date", ""))
 
-        pred   = _mock_ml(text, category)
-        pred_val = pred[meta["key"]]
-        pred_color = "#1D9E75" if pred_val >= 0 else "#E24B4A"
-        pred_arrow = "▲" if pred_val >= 0 else "▼"
+        # Binary impact prediction from Chenghao's XGBoost model
+        during_market = bool(row.get("during_market_hours", False))
+        text_key      = text[:80]
+        proba         = impact_map.get(text_key, None)
+        badge         = _get_impact_badge(proba, during_market)
+        badge_color   = _get_impact_color(proba)
+
         topics  = _detect_topics(text)
         effects = _get_effects(topics)
 
@@ -210,35 +234,39 @@ def render(T: dict, tz_offset: int):
                     icon, avg = CAT_SIGNALS[category]
                     st.info(f"{icon} Category avg: S&P {avg} in 5 min")
 
-            # ── Right: ML prediction ──────────────────────────────────────────
+            # ── Right: ML impact prediction ───────────────────────────────────
             with right:
-                st.markdown(f"**ML prediction · {interval}**")
-                st.markdown(
-                    f'<p style="font-size:28px;font-weight:700;color:{pred_color};margin:4px 0">'
-                    f'{pred_arrow} {pred_val:+.2f}%</p>',
-                    unsafe_allow_html=True,
-                )
-                st.markdown(
-                    f"**{STOCK_OPTIONS[stock_key]}** in **{interval}**\n\n"
-                    f"Model accuracy for this interval: "
-                    f"**{acc:.0f}%**\n\n"
-                    f"_{meta['note']}_"
-                )
+                st.markdown("**Market Impact Prediction**")
 
-                # All intervals summary
-                st.markdown("---")
-                st.markdown("**All intervals**")
-                for iv, iv_meta in INTERVAL_META.items():
-                    v     = pred[iv_meta["key"]]
-                    color = "#1D9E75" if v >= 0 else "#E24B4A"
-                    arrow = "▲" if v >= 0 else "▼"
-                    acc_v = iv_meta["accuracy"] * 100
-                    is_selected = "**" if iv == interval else ""
+                if not during_market:
+                    # Post outside market hours — model doesn't apply
                     st.markdown(
-                        f'{is_selected}{iv}{is_selected} · '
-                        f'<span style="color:{color};font-weight:600">{arrow} {v:+.2f}%</span> · '
-                        f'<span style="color:#888;font-size:11px">acc {acc_v:.0f}%</span>',
+                        '<p style="color:#888;font-size:12px;margin:4px 0">'
+                        '🕐 Posted outside market hours<br>'
+                        'Impact prediction not applicable</p>',
                         unsafe_allow_html=True,
                     )
-
-                st.caption("⚠️ Mock — real ML model pending")
+                elif proba is not None:
+                    # Real prediction from XGBoost model
+                    st.markdown(
+                        f'<p style="font-size:26px;font-weight:700;color:{badge_color};margin:4px 0">'
+                        f'{badge}</p>',
+                        unsafe_allow_html=True,
+                    )
+                    st.markdown(
+                        f'<p style="font-size:13px;color:#555;margin:2px 0">'
+                        f'Probability: <b>{proba:.0%}</b></p>',
+                        unsafe_allow_html=True,
+                    )
+                    st.caption(
+                        "XGBoost classifier · 5-min window · market-hours posts only · "
+                        "HIGH = prob ≥ 60%"
+                    )
+                else:
+                    # Market hours post but not in prediction window
+                    st.markdown(
+                        '<p style="color:#888;font-size:12px;margin:4px 0">'
+                        '📊 Market hours post<br>'
+                        'Outside prediction window</p>',
+                        unsafe_allow_html=True,
+                    )
