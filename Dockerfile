@@ -1,4 +1,4 @@
-FROM python:3.10-slim
+FROM python:3.12
 
 WORKDIR /app
 
@@ -18,6 +18,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
+
+# avoid package searching
+RUN pip install -e .
 
 # Initialize SQLite database (lightweight, can be on persistent storage or ephemeral)
 RUN python backend_database/init_db.py --db-path $TRUMPPULSE_DATA_DIR/trump_data.db
