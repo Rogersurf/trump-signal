@@ -20,11 +20,15 @@ def render(T: dict):
         days = st.slider(T["days_shown"], 7, 60, 30)
 
     df = get_stock_series(index_key, days)
-    st.plotly_chart(
-        stock_line_chart(df, INDEX_OPTIONS[index_key]),
-        use_container_width=True,
-    )
-    st.caption("⭐ Red stars = days with high-engagement Trump posts")
+
+    if df.empty:
+        st.warning("Stock data is not yet available. Please check back later.")
+    else:
+        st.plotly_chart(
+            stock_line_chart(df, INDEX_OPTIONS[index_key]),
+            use_container_width=True,
+        )
+        st.caption("⭐ Red stars = days with high-engagement Trump posts")
 
     st.divider()
     st.subheader("Average S&P 500 move by post category (5 min after post)")
