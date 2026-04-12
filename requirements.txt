@@ -1,7 +1,7 @@
 fastapi
 uvicorn
 pandas
-numpy
+numpy<2.0
 datasets
 transformers
 scikit-learn
@@ -14,4 +14,4 @@ huggingface_hub
 pytest
 httpx
 apscheduler
-chromadb
+chromadb==0.4.24
