@@ -7,7 +7,7 @@ import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import streamlit as st
-from frontend.config import LANGUAGES, TIMEZONES, TRANSLATIONS
+from frontend.config import TIMEZONES, TRANSLATIONS
 from frontend._data.api_client import is_api_alive
 import frontend._pages.feed         as feed
 import frontend._pages.market       as market
@@ -27,7 +27,7 @@ st.set_page_config(
 with st.sidebar:
     st.markdown("## 📊 TrumpSignal")
 
-    T         = TRANSLATIONS[lang]
+    T         = TRANSLATIONS["English"]
 
     tz_label  = st.selectbox(T["timezone"], list(TIMEZONES.keys()))
     tz_offset = TIMEZONES[tz_label]
