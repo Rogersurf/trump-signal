@@ -21,7 +21,8 @@ def render(T: dict):
     c1, c2, c3, c4 = st.columns(4)
     c1.metric(T["total_posts"],  f"{status['total_posts']:,}")
     c2.metric(T["posts_today"],  status["posts_today"])
-    c3.metric("Rows dropped",    status["rows_dropped_today"])
+    c3.metric("Market-hours posts", f"{status.get('pct_market_hours', 0)}%",
+              help="Posts made while NYSE was open — used for market impact analysis")
     c4.metric("GDELT updated",   "Weekly", help=status["last_gdelt_update"])
 
     st.divider()
@@ -45,14 +46,12 @@ def render(T: dict):
     with mc1:
         st.info(
             f"**Sentiment**\n\n`{status['model_name']}`\n\n"
-            # REPLACE: load actual metrics from artifacts/runs/
-            "F1 (mock): 0.88 · ~45s/run"
+            "Source: pre-labeled in dataset · RoBERTa fine-tuned on Twitter"
         )
     with mc2:
         st.info(
-            f"**Embeddings**\n\n`{status['embedding_model']}`\n\n"
-            # REPLACE: load actual metrics
-            "Dim: 384 · ~120s/run"
+            f"**Semantic Search**\n\n`{status['embedding_model']}`\n\n"
+            "Dim: 384 · ChromaDB cosine similarity · built on ingest"
         )
 
     st.divider()
