@@ -4,15 +4,14 @@ pandas
 numpy
 datasets
 transformers
-torch
 scikit-learn
 sentence-transformers
 streamlit
 requests
 plotly
 matplotlib
-kagglehub
 huggingface_hub
 pytest
 httpx
 apscheduler
+chromadb

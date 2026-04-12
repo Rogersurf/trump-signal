@@ -102,8 +102,13 @@ def render(T: dict):
         with st.spinner("Searching..."):
             results = ask_question(query.strip(), top_k=top_k)
 
+        # --- TEMPORARY DEBUG (REMOVE AFTER FIX) ---
+        st.subheader("DEBUG: Raw API Response")
+        st.json(results)
+        # -----------------------------------------
+
         if not results:
-            st.info(T["no_results"])
+            st.warning("⚠️ Could not connect to search backend. Please ensure the API server is running.")
             return
 
         # Business interpretation
@@ -133,4 +138,4 @@ def render(T: dict):
                         f"S&P :{impact_col}[{impact_str}]"
                     )
                 with cols[1]:
-                    st.metric(T["match"], f"{score*100:.0f}%")
+                    st.metric(T["match"], f"{score:.0f}%")

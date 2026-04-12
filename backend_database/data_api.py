@@ -4,8 +4,11 @@
 import sqlite3
 import pandas as pd
 import datetime
+import os
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(BASE_DIR, "trump_data.db")
 class TrumpDataClient:
-    def __init__(self, db_path="backend_database/trump_data.db"):
+    def __init__(self, db_path=DB_PATH):
         self.db_path = db_path
 
     def _get_conn(self):
