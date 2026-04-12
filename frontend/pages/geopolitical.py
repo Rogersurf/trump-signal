@@ -1,8 +1,8 @@
 """pages/geopolitical.py — Geopolitical signals tab"""
 import streamlit as st
-import pandas as pd
 from frontend.data.api_client import get_gdelt_summary, get_gdelt_timeseries
-from frontend.components.charts import gdelt_tone_chart
+from frontend.components.charts import gdelt_tone_bar
+
 
 def render(T: dict):
     st.subheader("Geopolitical Signals (GDELT)")
@@ -22,5 +22,6 @@ def render(T: dict):
     if "interpretation" in summary:
         st.info(summary["interpretation"])
 
-    st.plotly_chart(gdelt_tone_chart(df_trend), use_container_width=True)
+    # Use existing chart function from charts.py
+    st.plotly_chart(gdelt_tone_bar(df_trend), use_container_width=True)
     st.dataframe(df_trend)
