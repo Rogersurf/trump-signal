@@ -28,7 +28,11 @@ from sklearn.preprocessing import StandardScaler
 from xgboost import XGBClassifier
 
 from backend_database.data_api import DB_PATH, TrumpDataClient
+import joblib, json
+from pathlib import Path
 
+MODEL_DIR = Path(__file__).parent / "model_artifacts"
+MODEL_DIR.mkdir(parents=True, exist_ok=True)
 warnings.filterwarnings("ignore")
 
 # ─────────────────────────────────────────────
@@ -428,7 +432,12 @@ def train_model(df: pd.DataFrame, feature_cols: list):
         test_end      = str(test_end),
         fpr=fpr, tpr=tpr, prec=prec, rec=rec,
     )
-    return clf50, scaler, labelled[["datetime", "impact_proba"]], importance, metrics
+
+    # ── 重新用 top-50 fit 一个新 scaler（供 predict 用）────
+    scaler50 = StandardScaler()
+    scaler50.fit(X_train[:, top50_idx])   # 注意：用原始未缩放的 X_train
+
+    return clf50, scaler50, labelled[["datetime", "impact_proba"]], importance, metrics
 
 
 # ───────────────────���─────────────────────────
@@ -446,6 +455,9 @@ def run_pipeline():
 
     print("[4/4] Training XGBoost …")
     clf, scaler, proba_df, importance, metrics = train_model(posts, feature_cols)
+
+    # save model
+    save_model(clf, scaler, importance["feature"].tolist(), metrics)  # ← 加这行
 
     # Merge predicted probabilities back onto full posts
     posts = posts.merge(proba_df, on="datetime", how="left")
@@ -843,12 +855,157 @@ def build_dashboard(posts, importance, metrics, cat_cols, gdelt_cols):
         return fig_tl, fig_ret, fig_pd, fig_id, table
 
     return app
+# ─────────────────────────────────────────────
+# 6.  SAVE MODEL
+# ─────────────────────────────────────────────
+import joblib, json
+from pathlib import Path
+
+MODEL_DIR = Path(__file__).parent / "model_artifacts"
+
+
+def save_model(clf, scaler, feature_cols: list, metrics: dict):
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    joblib.dump(clf,    MODEL_DIR / "xgb_model.pkl")
+    joblib.dump(scaler, MODEL_DIR / "scaler.pkl")
+    with open(MODEL_DIR / "feature_cols.json", "w") as f:
+        json.dump(feature_cols, f, indent=2)
+    save_metrics = {k: v for k, v in metrics.items()
+                    if k not in ("fpr", "tpr", "prec", "rec")}
+    with open(MODEL_DIR / "metrics.json", "w") as f:
+        json.dump(save_metrics, f, indent=2)
+    print(f"      💾 Model saved → {MODEL_DIR}")
 
 
 # ─────────────────────────────────────────────
-# ENTRY POINT
+# 7.  PREDICT NEW POSTS
 # ─────────────────────────────────────────────
+def predict_new_posts(new_posts: pd.DataFrame) -> pd.DataFrame:
+    """
+    把新帖子喂进已保存的模型，返回带 impact_proba 的 DataFrame。
+
+    参数：
+        new_posts : 直接从 load_posts() 拿到的原始 DataFrame，
+                    或任何包含相同列结构的 DataFrame。
+
+    返回：
+        result    : 原始列 + impact_proba，按概率降序排列。
+
+    用法示例：
+        posts, cat_cols, gdelt_cols = load_posts()
+        # 只取最近 7 天
+        recent = posts[posts["datetime"] >= pd.Timestamp.now(tz="UTC")
+                       - pd.Timedelta(days=7)]
+        result = predict_new_posts(recent)
+        print(result[["datetime", "content", "impact_proba"]].head(10))
+    """
+    # ── 1. 加载模型 ──────────────────────────────────────
+    if not (MODEL_DIR / "xgb_model.pkl").exists():
+        raise FileNotFoundError(
+            f"模型文件不存在: {MODEL_DIR}\n先运行 run_pipeline() 训练并保存模型。"
+        )
+
+    clf     = joblib.load(MODEL_DIR / "xgb_model.pkl")
+    scaler  = joblib.load(MODEL_DIR / "scaler.pkl")
+    with open(MODEL_DIR / "feature_cols.json") as f:
+        feature_cols = json.load(f)
+
+    print(f"      📦 Model loaded from {MODEL_DIR}")
+    print(f"      📋 Expected features: {len(feature_cols)}")
+
+    # ── 2. 特征工程（和训练时完全一致）──────────────────
+    _, cat_cols, gdelt_cols = load_posts.__wrapped__() \
+        if hasattr(load_posts, "__wrapped__") else (None, None, None)
+
+    # 安全获取 cat_cols / gdelt_cols（直接从列名推断，不重新查 DB）
+    cat_cols_infer   = [c for c in new_posts.columns if c in CAT_COLS]
+    gdelt_cols_infer = [c for c in new_posts.columns if c in GDELT_COLS]
+
+    df, _ = engineer_features(new_posts.copy(), cat_cols_infer, gdelt_cols_infer)
+
+    # ── 3. 对齐特征列（训练时有的列，预测时可能没有） ───
+    for c in feature_cols:
+        if c not in df.columns:
+            df[c] = 0.0
+
+    X     = df[feature_cols].fillna(0).astype(float).values
+    X_sc  = scaler.transform(X)
+
+    # ── 4. 预测 ──────────────────────────────────────────
+    df["impact_proba"] = clf.predict_proba(X_sc)[:, 1]
+
+    high_risk = (df["impact_proba"] >= 0.6).sum()
+    print(f"      🔍 Predicted {len(df):,} posts  |  "
+          f"High-risk (≥0.6): {high_risk:,}  |  "
+          f"Max proba: {df['impact_proba'].max():.3f}")
+
+    # ── 5. 返回结果，按概率降序 ───────────────────────────
+    keep_cols = ["datetime", "content", "market_period",
+                 "during_market_hours", "impact_proba"]
+    keep_cols = [c for c in keep_cols if c in df.columns]
+
+    result = (df[keep_cols]
+              .sort_values("impact_proba", ascending=False)
+              .reset_index(drop=True))
+
+    return result
+
+# ─────────────────────────────────────────────
+def predict_latest(days: int = 7, fallback_n: int = 50) -> pd.DataFrame:
+    """
+    加载最新数据并预测，无需重新训练。
+
+    参数：
+        days       : 取最近多少天的帖子，默认 7 天
+        fallback_n : 如果最近 days 天没有数据，改取最新 N 条，默认 50
+
+    返回：
+        result : 带 impact_proba 的 DataFrame，按概率降序
+
+    外部调用示例：
+        from tests.soy_test.most_influence_detect import predict_latest
+        result = predict_latest(days=3)
+        print(result.head(10))
+    """
+    raw, _, _ = load_posts()
+
+    cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=days)
+    recent = raw[raw["datetime"] >= cutoff].copy()
+
+    if recent.empty:
+        print(f"      ⚠️  No posts in last {days} days, "
+              f"using latest {fallback_n} posts instead")
+        recent = raw.sort_values("datetime").tail(fallback_n).copy()
+
+    print(f"      Input posts : {len(recent):,}  "
+          f"({recent['datetime'].min().date()} → "
+          f"{recent['datetime'].max().date()})")
+
+    result = predict_new_posts(recent)
+
+    print(f"\n      {'datetime':<22} {'proba':>6}  {'market_period':<18}  content")
+    print(f"      {'-'*22} {'-'*6}  {'-'*18}  {'-'*50}")
+    for _, row in result.head(10).iterrows():
+        dt      = str(row["datetime"])[:19]
+        proba   = f"{row['impact_proba']:.3f}"
+        period  = str(row.get("market_period", ""))[:18]
+        content = str(row.get("content", ""))[:60].replace("\n", " ")
+        print(f"      {dt:<22} {proba:>6}  {period:<18}  {content}")
+
+    return result
+
+
 if __name__ == "__main__":
+    # ── 1. 训练并保存模型 ─────────────────────────────────
     posts, importance, metrics, cat_cols, gdelt_cols = run_pipeline()
-    app = build_dashboard(posts, importance, metrics, cat_cols, gdelt_cols)
-    app.run(debug=False, host="0.0.0.0", port=8050)
+
+    # ── 2. 测试：喂入最新数据 ────────────────────────────
+    print("\n" + "="*55)
+    print("🧪  PREDICT TEST — latest 7 days")
+    print("="*55)
+    predict_latest(days=7)
+
+    # ── 3. 启动 Dashboard ────────────────────────────────
+    # print("\n🚀  Starting dashboard on http://0.0.0.0:8050 …")
+    # app = build_dashboard(posts, importance, metrics, cat_cols, gdelt_cols)
+    # app.run(debug=False, host="0.0.0.0", port=8050)
