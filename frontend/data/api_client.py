@@ -286,45 +286,103 @@ def get_gdelt_timeseries(weeks: int = 8) -> pd.DataFrame:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def ask_question(query: str, top_k: int = 4) -> list:
-    """
-    Call the real semantic search API.
-    Returns a list of dicts: [{"post": {...}, "score": float}, ...]
-    """
-    import sys
-    url = f"{API_URL}/qa"
-    params = {"query": query, "limit": top_k}
-    print(f"[QA CLIENT] Calling {url} with params {params}", file=sys.stderr)
-
+    # ลองเรียก FastAPI ก่อน
     try:
-        r = requests.get(url, params=params, timeout=10)
-        print(f"[QA CLIENT] Status code: {r.status_code}", file=sys.stderr)
-        print(f"[QA CLIENT] Response text (first 200 chars): {r.text[:200]}", file=sys.stderr)
-
+        r = requests.get(f"{API_URL}/qa", params={"query": query, "limit": top_k}, timeout=10)
         if r.status_code == 200:
             data = r.json()
             results = data.get("results", [])
-            print(f"[QA CLIENT] Parsed {len(results)} results", file=sys.stderr)
-            return results
-        else:
-            print(f"[QA CLIENT] Non-200 status: {r.status_code}", file=sys.stderr)
-            return []
+            if results:
+                return results
     except Exception as e:
-        print(f"[QA CLIENT] Exception: {e}", file=sys.stderr)
-        return []
+        print(f"[QA] FastAPI error: {e}")
+
+    # Semantic search fallback — ดึง stock data จาก DB ด้วย
+    try:
+        from backend_database.embeddings import get_search_engine
+        engine  = get_search_engine()
+        results = engine.search(query, top_k=top_k)
+
+        if results:
+            formatted = []
+            for r in results:
+                post  = r.get("post", {})
+                score = r.get("score", 0)
+
+                # ดึง stock data จาก DB โดยใช้ post_id
+                row = {}
+                try:
+                    conn = _get_conn()
+                    rows = pd.read_sql(
+                        "SELECT * FROM truth_social WHERE post_id = ?",
+                        conn,
+                        params=[str(post.get("post_id", ""))]
+                    )
+                    if not rows.empty:
+                        row = rows.iloc[0].to_dict()
+                    conn.close()
+                except Exception as e:
+                    print(f"[QA] DB lookup error: {e}")
+
+                # คำนวณ market impact
+                try:
+                    b      = float(row.get("sp500_5min_before", 0) or 0)
+                    a      = float(row.get("sp500_5min_after",  0) or 0)
+                    impact = round((a - b) / b * 100, 2) if b != 0 else 0
+                except:
+                    impact = 0
+
+                formatted.append({
+                    "post": {
+                        "post_id":            str(post.get("post_id", "")),
+                        "date":               str(post.get("date", "")),
+                        "text":               str(post.get("text", "")),
+                        "sentiment":          str(row.get("sentiment", "NEUTRAL")),
+                        "sentiment_score":    0.5,
+                        "dominant_category":  "Other",
+                        "market_impact_pct":  impact,
+                        "sp500_5min_before":  row.get("sp500_5min_before", 0),
+                        "sp500_5min_after":   row.get("sp500_5min_after",  0),
+                        "qqq_5min_before":    row.get("qqq_5min_before",   0),
+                        "qqq_5min_after":     row.get("qqq_5min_after",    0),
+                        "djt_5min_before":    row.get("djt_5min_before",   0),
+                        "djt_5min_after":     row.get("djt_5min_after",    0),
+                        "gld_5min_before":    row.get("gld_5min_before",   0),
+                        "gld_5min_after":     row.get("gld_5min_after",    0),
+                        "tlt_5min_before":    row.get("tlt_5min_before",   0),
+                        "tlt_5min_after":     row.get("tlt_5min_after",    0),
+                        "uso_5min_before":    row.get("uso_5min_before",   0),
+                        "uso_5min_after":     row.get("uso_5min_after",    0),
+                        "ibit_5min_before":   row.get("ibit_5min_before",  0),
+                        "ibit_5min_after":    row.get("ibit_5min_after",   0),
+                        "lmt_5min_before":    row.get("lmt_5min_before",   0),
+                        "lmt_5min_after":     row.get("lmt_5min_after",    0),
+                        "uup_5min_before":    row.get("uup_5min_before",   0),
+                        "uup_5min_after":     row.get("uup_5min_after",    0),
+                        "replies":            int(row.get("replies_count",    0) or 0),
+                        "reblogs":            int(row.get("reblogs_count",    0) or 0),
+                        "favourites":         int(row.get("favourites_count", 0) or 0),
+                    },
+                    "score": round(float(score) / 100, 2),
+                })
+            return formatted
+
+    except Exception as e:
+        print(f"[QA] Semantic search error: {e}")
+
+    # Last resort — mock data
+    return _mock_search(query, top_k)
 
 
 def _mock_search(query: str, top_k: int) -> list:
-    posts = _mock_posts().to_dict("records")
+    """Last resort fallback — mock data"""
+    posts    = _mock_posts().to_dict("records")
     keywords = query.lower().split()
-    scored = []
-    for p in posts:
-        score = sum(1 for kw in keywords if kw in p["text"].lower())
-        scored.append((score + random.uniform(0, 0.3), p))
+    scored   = [(sum(1 for kw in keywords if kw in p["text"].lower()) + random.uniform(0, 0.3), p)
+                for p in posts]
     scored.sort(key=lambda x: x[0], reverse=True)
-    return [
-        {"post": p, "score": round(min(s / max(len(keywords), 1), 1.0), 2)}
-        for s, p in scored[:top_k]
-    ]
+    return [{"post": p, "score": round(min(s / max(len(keywords), 1), 1.0), 2)}
+            for s, p in scored[:top_k]]
 
 
 # ─────────────────────────────────────────────────────────────────────────────

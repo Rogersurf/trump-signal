@@ -7,11 +7,18 @@ fallback เป็น mock data ถ้า client ไม่พร้อม
 """
 
 import random
+import os
 import requests
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 from frontend.config import API_URL
+import sqlite3
+
+_DB_PATH = os.environ.get("TRUMP_DB_PATH", os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "backend_database", "trump_data.db")))
+
+def _get_conn():
+    return sqlite3.connect(_DB_PATH)
 
 random.seed(42)
 np.random.seed(42)
@@ -224,22 +231,71 @@ def ask_question(query: str, top_k: int = 4) -> list:
                 return data["results"]
     except:
         pass
-#change to simple ollama --> embeddings let sees 
-    # Semantic search fallback
+    # Semantic search + DB lookup
     try:
         from backend_database.embeddings import get_search_engine
-        engine = get_search_engine()
+        engine  = get_search_engine()
         results = engine.search(query, top_k=top_k)
         if results:
-            return [
-                {
-                    "post": r.get("post", {}),
-                    "score": round(float(r.get("score", 0)) / 100, 2)
-                }
-                for r in results
-            ]
+            formatted = []
+            for r in results:
+                post  = r.get("post", {})
+                score = r.get("score", 0)
+                row   = {}
+                try:
+                    conn = _get_conn()
+                    rows = pd.read_sql(
+                        "SELECT * FROM truth_social WHERE post_id = ?",
+                        conn, params=[str(post.get("post_id", ""))]
+                    )
+                    if not rows.empty:
+                        row = rows.iloc[0].to_dict()
+                    conn.close()
+                except Exception as db_e:
+                    print(f"[QA] DB lookup error: {db_e}")
+                try:
+                    b      = float(row.get("sp500_5min_before", 0) or 0)
+                    a      = float(row.get("sp500_5min_after",  0) or 0)
+                    impact = round((a - b) / b * 100, 2) if b != 0 else 0
+                except:
+                    impact = 0
+                formatted.append({
+                    "post": {
+                        "post_id":           str(post.get("post_id", "")),
+                        "date":              str(post.get("date", "")),
+                        "text":              str(row.get("text", "") or post.get("text", "")),
+                        "sentiment":         "NEUTRAL",
+                        "sentiment_score":   0.5,
+                        "dominant_category": "Other",
+                        "market_impact_pct": impact,
+                        "sp500_5min_before": row.get("sp500_5min_before", 0),
+                        "sp500_5min_after":  row.get("sp500_5min_after",  0),
+                        "qqq_5min_before":   row.get("qqq_5min_before",   0),
+                        "qqq_5min_after":    row.get("qqq_5min_after",    0),
+                        "djt_5min_before":   row.get("djt_5min_before",   0),
+                        "djt_5min_after":    row.get("djt_5min_after",    0),
+                        "gld_5min_before":   row.get("gld_5min_before",   0),
+                        "gld_5min_after":    row.get("gld_5min_after",    0),
+                        "tlt_5min_before":   row.get("tlt_5min_before",   0),
+                        "tlt_5min_after":    row.get("tlt_5min_after",    0),
+                        "uso_5min_before":   row.get("uso_5min_before",   0),
+                        "uso_5min_after":    row.get("uso_5min_after",    0),
+                        "ibit_5min_before":  row.get("ibit_5min_before",  0),
+                        "ibit_5min_after":   row.get("ibit_5min_after",   0),
+                        "lmt_5min_before":   row.get("lmt_5min_before",   0),
+                        "lmt_5min_after":    row.get("lmt_5min_after",    0),
+                        "uup_5min_before":   row.get("uup_5min_before",   0),
+                        "uup_5min_after":    row.get("uup_5min_after",    0),
+                        "url":               str(row.get("url", "")),
+                        "replies":           int(row.get("replies_count",    0) or 0),
+                        "reblogs":           int(row.get("reblogs_count",    0) or 0),
+                        "favourites":        int(row.get("favourites_count", 0) or 0),
+                    },
+                    "score": round(float(score) / 100, 2),
+                })
+            return formatted
     except Exception as e:
-        print(f"semantic search error: {e}")
+        print(f"[QA] Semantic search error: {e}")
 
     if _USE_REAL:
         try:
