@@ -1,8 +1,5 @@
 """
-streamlitapp.py
-===============
-Entry point — routing และ sidebar เท่านั้น
-ไม่มีโลจิกอื่น ทุกอย่างอยู่ใน pages/
+streamlitapp.py — entry point, routing และ sidebar
 Run: streamlit run frontend/streamlitapp.py
 """
 
@@ -10,14 +7,14 @@ import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import streamlit as st
-from frontend.config import LANGUAGES, TIMEZONES, TRANSLATIONS
-from frontend.data.api_client import is_api_alive
-import frontend.pages.feed         as feed
-import frontend.pages.market       as market
-import frontend.pages.topics       as topics
-import frontend.pages.geopolitical as geo
-import frontend.pages.qa           as qa
-import frontend.pages.dev          as dev
+from frontend.config import TIMEZONES, TRANSLATIONS
+from frontend._data.api_client import is_api_alive
+import frontend._pages.feed         as feed
+import frontend._pages.market       as market
+import frontend._pages.topics       as topics
+import frontend._pages.geopolitical as geo
+import frontend._pages.qa           as qa
+import frontend._pages.dev          as dev
 
 st.set_page_config(
     page_title="TrumpSignal",
@@ -30,8 +27,7 @@ st.set_page_config(
 with st.sidebar:
     st.markdown("## 📊 TrumpSignal")
 
-    lang      = st.selectbox("Language / ภาษา / 语言", LANGUAGES)
-    T         = TRANSLATIONS[lang]
+    T         = TRANSLATIONS["English"]
 
     tz_label  = st.selectbox(T["timezone"], list(TIMEZONES.keys()))
     tz_offset = TIMEZONES[tz_label]
@@ -46,7 +42,7 @@ with st.sidebar:
 
     st.divider()
 
-    # API status
+    # API status only — no empty nav items
     if is_api_alive():
         st.success(T["api_online"], icon="✅")
     else:
