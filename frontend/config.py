@@ -5,38 +5,9 @@ config.py
 REPLACE: API_URL เมื่อ deploy ขึ้น cloud
 """
 
+# REPLACE: เปลี่ยนเป็น URL จริงตอน deploy เช่น https://trumpsignal.app/api
 import os
-import socket
-
-# ── Intelligent API URL Detection ────────────────────────────────────────────
-def _get_api_url():
-    # If environment variable is set, use it
-    env_url = os.environ.get("API_URL")
-    if env_url:
-        return env_url
-
-    # Check if we're running inside a Docker container (Hugging Face Space)
-    if os.path.exists("/.dockerenv"):
-        return "http://localhost:8000"
-
-    # Check if port 8001 is open (local dev with backend on 8001)
-    try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(0.1)
-        result = sock.connect_ex(("localhost", 8001))
-        sock.close()
-        if result == 0:
-            return "http://localhost:8001"
-    except:
-        pass
-
-    # Default fallback (e.g., inside Space container or backend on 8000)
-    return "http://localhost:8000"
-
-API_URL = _get_api_url()
-
-# ── Rest of the configuration (unchanged) ─────────────────────────────────────
-LANGUAGES = ["English", "Thai", "Chinese"]
+API_URL = os.environ.get("API_URL", "http://localhost:8000")
 
 TIMEZONES = {
     "UTC":               0,
