@@ -36,10 +36,21 @@ SENTIMENT_COLORS = {
 
 INDEX_OPTIONS = {
     "sp500": "S&P 500",
-    "djt":   "DJT (Trump Media)",
     "qqq":   "QQQ (Nasdaq 100)",
+    "djt":   "DJT (Trump Media)",
     "gld":   "GLD (Gold)",
     "tlt":   "TLT (US Bonds)",
+    "lmt":   "LMT (Lockheed Martin)",
+    "uso":   "USO (Oil)",
+    "ibit":  "IBIT (Bitcoin ETF)",
+    "uup":   "UUP (US Dollar)",
+    "war":   "WAR ETF",
+    "dia":   "DIA (Dow Jones)",
+    "fxi":   "FXI (China ETF)",
+    "xlv":   "XLV (Health Care)",
+    "xli":   "XLI (Industrials)",
+    "eww":   "EWW (Mexico ETF)",
+    "vgk":   "VGK (Europe ETF)",
 }
 
 # ── i18n ──────────────────────────────────────────────────────────────────────

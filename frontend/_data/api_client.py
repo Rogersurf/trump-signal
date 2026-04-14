@@ -52,7 +52,7 @@ def get_posts(start_date=None, end_date=None) -> pd.DataFrame:
                 date_to=str(end_date) if end_date else None,
             )
             if df.empty:
-                return _mock_posts(start_date, end_date)
+                return pd.DataFrame()  # no mock — show empty
 
             # rename columns ให้ตรงกับ frontend
             df = df.rename(columns={
@@ -123,8 +123,11 @@ def get_category_summary(period: str = "month", date_from: str = None, date_to: 
 def get_stock_series(index: str = "sp500", days: int = 30) -> pd.DataFrame:
     if _USE_REAL:
         try:
-            end   = datetime.now().strftime("%Y-%m-%d")
-            start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+            # use dataset max date dynamically — no hardcode
+            all_df   = _client.get_full_data()
+            max_date = pd.to_datetime(all_df["date"]).max() if not all_df.empty else datetime.now()
+            end   = max_date.strftime("%Y-%m-%d")
+            start = (max_date - timedelta(days=days)).strftime("%Y-%m-%d")
             df    = _client.get_market_impact(start=start, end=end)
 
             if not df.empty:
@@ -223,12 +226,13 @@ def get_gdelt_timeseries(weeks: int = 8) -> pd.DataFrame:
             df    = _client.get_gdelt_trend(start=start, end=end)
             if not df.empty:
                 # get_gdelt_trend returns: day, gdelt_avg_tone, gdelt_verbal_conflict, ...
+                df["day"] = pd.to_datetime(df["day"]).dt.strftime("%d %b")
                 df = df.rename(columns={
                     "day":                   "week",
                     "gdelt_avg_tone":        "avg_tone",
-                    "tone":                  "avg_tone",        # fallback alias
+                    "tone":                  "avg_tone",
                     "gdelt_verbal_conflict": "verbal_conflict",
-                    "protest":               "verbal_conflict",  # fallback alias
+                    "protest":               "verbal_conflict",
                 })
                 # keep only what geopolitical.py needs
                 keep = [c for c in ["week", "avg_tone", "verbal_conflict"] if c in df.columns]
@@ -358,7 +362,7 @@ def ask_question(query: str, top_k: int = 4) -> list:
         except Exception as e:
             print(f"ask_question error: {e}")
 
-    return _mock_search(query, top_k)
+    return []  # no mock — show empty
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -465,35 +469,3 @@ def _add_engagement(df):
 # ─────────────────────────────────────────────────────────────────────────────
 # MOCK FALLBACKS
 # ─────────────────────────────────────────────────────────────────────────────
-
-def _mock_posts(start_date=None, end_date=None):
-    posts = [
-        {"post_id":"p001","date":"2026-04-06","time":"11:08","datetime":datetime(2026,4,6,11,8),"text":"Great going Freedom Caucus. Proud of you!!! President DJT","sentiment":"POSITIVE","sentiment_score":0.94,"dominant_category":"Self-promotion","engagement_score":22825,"replies":1574,"reblogs":4835,"favourites":16414,"has_media":True,"is_president":True,"sp500_5min_before":6581.56,"sp500_5min_after":6590.99,"market_impact_pct":0.14,"post_type":"original"},
-        {"post_id":"p002","date":"2026-04-05","time":"12:03","datetime":datetime(2026,4,5,12,3),"text":"Open the Strait, you crazy bastards, or you'll be living in Hell - JUST WATCH!","sentiment":"NEGATIVE","sentiment_score":0.97,"dominant_category":"Threatening intl.","engagement_score":125335,"replies":22306,"reblogs":19346,"favourites":83683,"has_media":False,"is_president":True,"sp500_5min_before":6581.56,"sp500_5min_after":6562.50,"market_impact_pct":-0.29,"post_type":"original"},
-        {"post_id":"p003","date":"2026-04-04","time":"13:32","datetime":datetime(2026,4,4,13,32),"text":"178,000 new jobs, TRADE DEFICIT down 55%. THANK YOU MR. TARIFF! MAGA!!!","sentiment":"POSITIVE","sentiment_score":0.91,"dominant_category":"Enacting non-agg.","engagement_score":60557,"replies":3150,"reblogs":9820,"favourites":47587,"has_media":False,"is_president":True,"sp500_5min_before":6560.00,"sp500_5min_after":6572.00,"market_impact_pct":0.18,"post_type":"original"},
-        {"post_id":"p004","date":"2026-04-04","time":"14:05","datetime":datetime(2026,4,4,14,5),"text":"Remember when I gave Iran ten days to MAKE A DEAL or OPEN UP THE HORMUZ STRAIT.","sentiment":"NEGATIVE","sentiment_score":0.93,"dominant_category":"Threatening intl.","engagement_score":65339,"replies":6841,"reblogs":10745,"favourites":47753,"has_media":False,"is_president":True,"sp500_5min_before":6572.00,"sp500_5min_after":6553.00,"market_impact_pct":-0.29,"post_type":"original"},
-    ]
-    df = pd.DataFrame(posts)
-    df["datetime"] = pd.to_datetime(df["datetime"])
-    df["date"]     = pd.to_datetime(df["date"])
-    if start_date: df = df[df["date"] >= pd.to_datetime(start_date)]
-    if end_date:   df = df[df["date"] <= pd.to_datetime(end_date)]
-    return df.sort_values("datetime", ascending=False).reset_index(drop=True)
-
-def _mock_stock(index, days):
-    base = {"sp500":6500.0,"djt":8.80,"qqq":570.0,"gld":425.0,"tlt":86.0}
-    p = base.get(index, 6500.0); prices = [p]; dates = []
-    for i in range(days-1,-1,-1):
-        dates.append((datetime(2026,4,6)-timedelta(days=i)).strftime("%Y-%m-%d"))
-    for _ in range(days-1):
-        prices.append(round(prices[-1]*(1+np.random.normal(0,0.008)),2))
-    df = pd.DataFrame({"date":dates,"price":prices,"has_big_post":[False]*days})
-    df["pct_change"] = df["price"].pct_change().fillna(0).round(4)
-    return df
-
-def _mock_search(query, top_k):
-    posts = _mock_posts().to_dict("records")
-    kws   = query.lower().split()
-    scored = [(sum(1 for kw in kws if kw in p["text"].lower()) + random.uniform(0,.3), p) for p in posts]
-    scored.sort(key=lambda x: x[0], reverse=True)
-    return [{"post":p,"score":round(min(s/max(len(kws),1),1.0),2)} for s,p in scored[:top_k]]
