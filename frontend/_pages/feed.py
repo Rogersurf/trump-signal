@@ -1,5 +1,6 @@
 """pages/feed.py — Daily feed with real ML prediction"""
 import streamlit as st
+import pandas as pd
 from datetime import datetime, date, timedelta
 from frontend._data.api_client import get_posts
 from frontend._components.post_card import _detect_topics, _get_effects
@@ -89,7 +90,14 @@ def _get_market_status() -> tuple:
 
 
 def render(T: dict, tz_offset: int):
-    ds_end = date(2026, 4, 14)
+    # get dataset max date dynamically
+    try:
+        import sqlite3
+        conn = sqlite3.connect('backend_database/trump_data.db')
+        ds_end = pd.to_datetime(conn.execute("SELECT MAX(date) FROM truth_social").fetchone()[0]).date()
+        conn.close()
+    except:
+        ds_end = date.today()
     today  = min(date.today(), ds_end)
 
     # ── Live clock + market status ────────────────────────────────────────────

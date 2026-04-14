@@ -6,17 +6,20 @@ from frontend._data.api_client import get_gdelt_timeseries
 from frontend._components.charts import gdelt_tone_bar, gdelt_breakdown_bar
 
 def _get_available_dates():
-    """Get available months and years from dataset dynamically"""
+    """Get min/max dates from DB directly — always up to date"""
     try:
-        from backend_database.data_api import TrumpDataClient
-        c   = TrumpDataClient()
-        df  = c.get_gdelt_trend(start="2020-01-01", end="2099-12-31")
-        df["day"] = pd.to_datetime(df["day"])
-        min_date  = df["day"].min().date()
-        max_date  = df["day"].max().date()
-        return min_date, max_date
-    except:
-        return date(2025, 10, 1), date(2026, 4, 7)
+        import sqlite3, os
+        db = os.environ.get("TRUMP_DB_PATH",
+             os.path.abspath(os.path.join(os.path.dirname(__file__),
+             "..", "..", "backend_database", "trump_data.db")))
+        conn = sqlite3.connect(db)
+        min_d = conn.execute("SELECT MIN(date) FROM truth_social").fetchone()[0]
+        max_d = conn.execute("SELECT MAX(date) FROM truth_social").fetchone()[0]
+        conn.close()
+        return pd.to_datetime(min_d).date(), pd.to_datetime(max_d).date()
+    except Exception as e:
+        print(f"_get_available_dates error: {e}")
+        return date(2022, 1, 1), date.today()
 
 def _get_gdelt_for_range(start: date, end: date) -> pd.DataFrame:
     """Get GDELT data for a specific date range"""
