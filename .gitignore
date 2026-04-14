@@ -42,4 +42,3 @@ Dockerfile
 .pytest_cache/chroma_db/
 backend_database/chroma_db/
 tests/chroma_db/
-build/
