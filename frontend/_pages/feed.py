@@ -186,7 +186,7 @@ def render(T: dict, tz_offset: int):
 
     st.caption(f"{len(posts)} posts · UTC{tz_offset:+d} · tracking {STOCK_OPTIONS[stock_key]}")
 
-        for _, row in posts.iterrows():
+    for _, row in posts.iterrows():
         # Safely extract values with defaults
         text = str(row.get("text", "")) if pd.notna(row.get("text")) else ""
         category = row.get("dominant_category", "Other")
