@@ -7,14 +7,19 @@ from frontend._components.charts import stock_line_chart, category_impact_bar
 from frontend.config import INDEX_OPTIONS
 
 def _get_available_dates():
-    """Get dataset max date dynamically"""
+    """Get dataset max date from DB directly — always up to date"""
     try:
-        df = _client.get_full_data()
-        if not df.empty:
-            return pd.to_datetime(df["date"]).max().date()
-    except:
-        pass
-    return date(2026, 4, 14)
+        import sqlite3, os
+        db = os.environ.get("TRUMP_DB_PATH",
+             os.path.abspath(os.path.join(os.path.dirname(__file__),
+             "..", "..", "backend_database", "trump_data.db")))
+        conn = sqlite3.connect(db)
+        max_d = conn.execute("SELECT MAX(date) FROM truth_social").fetchone()[0]
+        conn.close()
+        return pd.to_datetime(max_d).date()
+    except Exception as e:
+        print(f"_get_available_dates error: {e}")
+        return date.today()
 
 def _get_date_range(period: str, max_date: date):
     if period == "This month":
