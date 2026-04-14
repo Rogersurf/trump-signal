@@ -92,10 +92,15 @@ def get_sentiments() -> pd.DataFrame:
 # CATEGORY SUMMARY — pie chart
 # ─────────────────────────────────────────────────────────────────────────────
 
-def get_category_summary(period: str = "month") -> pd.DataFrame:
+def get_category_summary(period: str = "month", date_from: str = None, date_to: str = None) -> pd.DataFrame:
     if _USE_REAL:
         try:
-            result = _client.get_category_distribution()
+            from datetime import date, timedelta
+            if not date_from or not date_to:
+                period_days = {'week': 7, 'month': 30, 'year': 365}.get(period, 30)
+                date_to   = date.today().strftime('%Y-%m-%d')
+                date_from = (date.today() - timedelta(days=period_days)).strftime('%Y-%m-%d')
+            result = _client.get_category_distribution(date_from=date_from, date_to=date_to)
             if isinstance(result, pd.Series):
                 return pd.DataFrame({
                     "category": [_CAT_MAP.get(k, k) for k in result.index],
@@ -108,11 +113,7 @@ def get_category_summary(period: str = "month") -> pd.DataFrame:
         except Exception as e:
             print(f"get_category_summary error: {e}")
 
-    return pd.DataFrame({
-        "category": ["Self-promotion", "Attacking opposition", "Threatening intl.",
-                     "Enacting non-agg.", "Praising/endorsing", "De-escalating", "Other"],
-        "count":    [72, 44, 38, 35, 21, 8, 14],
-    })
+    return pd.DataFrame(columns=["category", "count"])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -163,7 +164,7 @@ def get_stock_series(index: str = "sp500", days: int = 30) -> pd.DataFrame:
         except Exception as e:
             print(f"get_stock_series error: {e}")
 
-    return _mock_stock(index, days)
+    return pd.DataFrame(columns=["date", "price", "has_big_post", "pct_change"])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -199,12 +200,7 @@ def get_gdelt_summary() -> dict:
         except Exception as e:
             print(f"get_gdelt_summary error: {e}")
 
-    return {
-        "week_of": "Latest", "military_events": 2326, "verbal_conflict": 7642,
-        "verbal_cooperation": 1710, "material_conflict": 1625, "diplomatic": 0,
-        "goldstein_avg": 0.11, "avg_tone": -2.28, "total_events": 13303,
-        "interpretation": "Global tension was elevated this week.",
-    }
+    return {}
 
 
 def get_gdelt_timeseries(weeks: int = 8) -> pd.DataFrame:
@@ -228,12 +224,7 @@ def get_gdelt_timeseries(weeks: int = 8) -> pd.DataFrame:
         except Exception as e:
             print(f"get_gdelt_timeseries error: {e}")
 
-    dates = [datetime(2026, 4, 6) - timedelta(weeks=i) for i in range(weeks - 1, -1, -1)]
-    return pd.DataFrame({
-        "week":           [d.strftime("%b %d") for d in dates],
-        "avg_tone":       [-1.2, -1.8, -2.1, -0.9, -1.5, -2.8, -2.1, -2.28][:weeks],
-        "verbal_conflict": [5200, 6100, 7200, 4800, 6500, 8900, 7100, 7642][:weeks],
-    })
+    return pd.DataFrame(columns=["week", "avg_tone", "verbal_conflict"])
 
 
 # ─────────────────────────────────────────────────────────────────────────────

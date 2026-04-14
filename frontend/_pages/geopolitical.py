@@ -8,6 +8,9 @@ def render(T: dict):
     st.caption("GDELT global event database · updates weekly")
 
     gdelt = get_gdelt_summary()
+    if not gdelt:
+        st.warning("📭 No GDELT data available for this period.")
+        return
     gt_df = get_gdelt_timeseries(8)
 
     c1, c2, c3 = st.columns(3)
