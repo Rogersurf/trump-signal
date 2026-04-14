@@ -49,7 +49,12 @@ with st.sidebar:
         st.warning(T["api_offline"], icon="⚠️")
 
     st.caption("Posts: daily · Geopolitical: weekly")
-    st.caption("v0.1 — TrumpSignal")
+    try:
+        import os
+        version = open(os.path.join(os.path.dirname(__file__), "VERSION")).read().strip()
+    except:
+        version = "1.0.0"
+    st.caption(f"v{version} — TrumpSignal")
 
 # ── Route ─────────────────────────────────────────────────────────────────────
 if dashboard == T["nav_user"]:
