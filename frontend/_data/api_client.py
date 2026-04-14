@@ -47,12 +47,25 @@ def is_api_alive() -> bool:
 def get_posts(start_date=None, end_date=None) -> pd.DataFrame:
     if _USE_REAL:
         try:
-            df = _client.get_full_data(
-                date_from=str(start_date) if start_date else None,
-                date_to=str(end_date) if end_date else None,
-            )
+            # use DATE() to handle datetime format in DB
+            import sqlite3, os
+            db = os.environ.get("TRUMP_DB_PATH",
+                 os.path.abspath(os.path.join(os.path.dirname(__file__),
+                 "..", "..", "backend_database", "trump_data.db")))
+            conn = sqlite3.connect(db)
+            query = "SELECT * FROM truth_social WHERE 1=1"
+            params = []
+            if start_date:
+                query += " AND DATE(date) >= ?"
+                params.append(str(start_date))
+            if end_date:
+                query += " AND DATE(date) <= ?"
+                params.append(str(end_date))
+            query += " ORDER BY datetime DESC LIMIT 500"
+            df = pd.read_sql(query, conn, params=params)
+            conn.close()
             if df.empty:
-                return _mock_posts(start_date, end_date)
+                return pd.DataFrame()  # no mock — show empty
 
             # rename columns ให้ตรงกับ frontend
             df = df.rename(columns={
@@ -81,7 +94,7 @@ def get_posts(start_date=None, end_date=None) -> pd.DataFrame:
         except Exception as e:
             print(f"get_posts error: {e}")
 
-    return _mock_posts(start_date, end_date)
+    return pd.DataFrame()  # empty = no data
 
 
 def get_sentiments() -> pd.DataFrame:
@@ -92,10 +105,15 @@ def get_sentiments() -> pd.DataFrame:
 # CATEGORY SUMMARY — pie chart
 # ─────────────────────────────────────────────────────────────────────────────
 
-def get_category_summary(period: str = "month") -> pd.DataFrame:
+def get_category_summary(period: str = "month", date_from: str = None, date_to: str = None) -> pd.DataFrame:
     if _USE_REAL:
         try:
-            result = _client.get_category_distribution()
+            from datetime import date, timedelta
+            if not date_from or not date_to:
+                period_days = {'week': 7, 'month': 30, 'year': 365}.get(period, 30)
+                date_to   = date.today().strftime('%Y-%m-%d')
+                date_from = (date.today() - timedelta(days=period_days)).strftime('%Y-%m-%d')
+            result = _client.get_category_distribution(date_from=date_from, date_to=date_to)
             if isinstance(result, pd.Series):
                 return pd.DataFrame({
                     "category": [_CAT_MAP.get(k, k) for k in result.index],
@@ -108,11 +126,7 @@ def get_category_summary(period: str = "month") -> pd.DataFrame:
         except Exception as e:
             print(f"get_category_summary error: {e}")
 
-    return pd.DataFrame({
-        "category": ["Self-promotion", "Attacking opposition", "Threatening intl.",
-                     "Enacting non-agg.", "Praising/endorsing", "De-escalating", "Other"],
-        "count":    [72, 44, 38, 35, 21, 8, 14],
-    })
+    return pd.DataFrame(columns=["category", "count"])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -122,8 +136,11 @@ def get_category_summary(period: str = "month") -> pd.DataFrame:
 def get_stock_series(index: str = "sp500", days: int = 30) -> pd.DataFrame:
     if _USE_REAL:
         try:
-            end   = datetime.now().strftime("%Y-%m-%d")
-            start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+            # use dataset max date dynamically — no hardcode
+            all_df   = _client.get_full_data()
+            max_date = pd.to_datetime(all_df["date"]).max() if not all_df.empty else datetime.now()
+            end   = max_date.strftime("%Y-%m-%d")
+            start = (max_date - timedelta(days=days)).strftime("%Y-%m-%d")
             df    = _client.get_market_impact(start=start, end=end)
 
             if not df.empty:
@@ -163,7 +180,7 @@ def get_stock_series(index: str = "sp500", days: int = 30) -> pd.DataFrame:
         except Exception as e:
             print(f"get_stock_series error: {e}")
 
-    return _mock_stock(index, days)
+    return pd.DataFrame(columns=["date", "price", "has_big_post", "pct_change"])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -173,54 +190,62 @@ def get_stock_series(index: str = "sp500", days: int = 30) -> pd.DataFrame:
 def get_gdelt_summary() -> dict:
     if _USE_REAL:
         try:
-            df = _client.get_gdelt_events()
-            if not df.empty:
-                row  = df.iloc[-1]
-                # get_gdelt_events returns: military, sanctions, protest, tone, total_events
-                tone = float(row.get("tone", 0) or row.get("gdelt_avg_tone", 0) or 0)
-                interp = (
-                    "Global tension elevated — verbal conflict high, world already tense when Trump posted."
-                    if tone < -2 else
-                    "Moderate tension detected this week." if tone < -1 else
-                    "Global tone relatively neutral this week."
+            # use get_gdelt_trend — dynamic max date, no hardcode
+            all_df = _client.get_gdelt_trend(start="2020-01-01", end="2099-12-31")
+            if not all_df.empty:
+                max_date = pd.to_datetime(all_df["day"]).max()
+                start    = (max_date - timedelta(days=7)).strftime("%Y-%m-%d")
+                df       = _client.get_gdelt_trend(
+                    start=start,
+                    end=max_date.strftime("%Y-%m-%d")
                 )
-                return {
-                    "week_of":            str(row.get("day", "Latest")),
-                    "military_events":    int(row.get("military",          row.get("gdelt_military", 0)) or 0),
-                    "verbal_conflict":    int(row.get("protest",           row.get("gdelt_verbal_conflict", 0)) or 0),
-                    "verbal_cooperation": int(row.get("gdelt_verbal_cooperation", 0) or 0),
-                    "material_conflict":  int(row.get("sanctions",         row.get("gdelt_material_conflict", 0)) or 0),
-                    "diplomatic":         int(row.get("gdelt_diplomatic",  0) or 0),
-                    "goldstein_avg":      round(float(row.get("gdelt_goldstein_avg", 0) or 0), 2),
-                    "avg_tone":           round(tone, 2),
-                    "total_events":       int(row.get("total_events",      row.get("gdelt_total_events", 0)) or 0),
-                    "interpretation":     interp,
-                }
+                if not df.empty:
+                    row  = df.iloc[-1]
+                    tone = float(row.get("gdelt_avg_tone", 0) or 0)
+                    interp = (
+                        "Global tension elevated — verbal conflict high."
+                        if tone < -2 else
+                        "Moderate tension detected this week." if tone < -1 else
+                        "Global tone relatively neutral this week."
+                    )
+                    return {
+                        "week_of":            str(max_date.strftime("%d %b %Y")),
+                        "military_events":    int(row.get("gdelt_military",           0) or 0),
+                        "verbal_conflict":    int(row.get("gdelt_verbal_conflict",    0) or 0),
+                        "verbal_cooperation": int(row.get("gdelt_verbal_cooperation", 0) or 0),
+                        "material_conflict":  int(row.get("gdelt_material_conflict",  0) or 0),
+                        "diplomatic":         int(row.get("gdelt_diplomatic",         0) or 0),
+                        "goldstein_avg":      round(float(row.get("gdelt_goldstein_avg", 0) or 0), 2),
+                        "avg_tone":           round(tone, 2),
+                        "total_events":       int(row.get("gdelt_total_events",       0) or 0),
+                        "interpretation":     interp,
+                    }
         except Exception as e:
             print(f"get_gdelt_summary error: {e}")
-
-    return {
-        "week_of": "Latest", "military_events": 2326, "verbal_conflict": 7642,
-        "verbal_cooperation": 1710, "material_conflict": 1625, "diplomatic": 0,
-        "goldstein_avg": 0.11, "avg_tone": -2.28, "total_events": 13303,
-        "interpretation": "Global tension was elevated this week.",
-    }
+    return {}
 
 
 def get_gdelt_timeseries(weeks: int = 8) -> pd.DataFrame:
     if _USE_REAL:
         try:
-            end   = datetime.now().strftime("%Y-%m-%d")
-            start = (datetime.now() - timedelta(weeks=weeks)).strftime("%Y-%m-%d")
+            weeks = max(weeks, 4)
+            # get latest date from dataset dynamically — no hardcode
+            all_df = _client.get_gdelt_trend(start="2020-01-01", end="2099-12-31")
+            if all_df.empty:
+                return pd.DataFrame(columns=["week", "avg_tone", "verbal_conflict"])
+            max_date = pd.to_datetime(all_df["day"]).max()
+            end   = max_date.strftime("%Y-%m-%d")
+            start = (max_date - timedelta(weeks=weeks)).strftime("%Y-%m-%d")
             df    = _client.get_gdelt_trend(start=start, end=end)
             if not df.empty:
                 # get_gdelt_trend returns: day, gdelt_avg_tone, gdelt_verbal_conflict, ...
+                df["day"] = pd.to_datetime(df["day"]).dt.strftime("%d %b")
                 df = df.rename(columns={
                     "day":                   "week",
                     "gdelt_avg_tone":        "avg_tone",
-                    "tone":                  "avg_tone",        # fallback alias
+                    "tone":                  "avg_tone",
                     "gdelt_verbal_conflict": "verbal_conflict",
-                    "protest":               "verbal_conflict",  # fallback alias
+                    "protest":               "verbal_conflict",
                 })
                 # keep only what geopolitical.py needs
                 keep = [c for c in ["week", "avg_tone", "verbal_conflict"] if c in df.columns]
@@ -228,12 +253,7 @@ def get_gdelt_timeseries(weeks: int = 8) -> pd.DataFrame:
         except Exception as e:
             print(f"get_gdelt_timeseries error: {e}")
 
-    dates = [datetime(2026, 4, 6) - timedelta(weeks=i) for i in range(weeks - 1, -1, -1)]
-    return pd.DataFrame({
-        "week":           [d.strftime("%b %d") for d in dates],
-        "avg_tone":       [-1.2, -1.8, -2.1, -0.9, -1.5, -2.8, -2.1, -2.28][:weeks],
-        "verbal_conflict": [5200, 6100, 7200, 4800, 6500, 8900, 7100, 7642][:weeks],
-    })
+    return pd.DataFrame(columns=["week", "avg_tone", "verbal_conflict"])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -355,7 +375,7 @@ def ask_question(query: str, top_k: int = 4) -> list:
         except Exception as e:
             print(f"ask_question error: {e}")
 
-    return _mock_search(query, top_k)
+    return []  # no mock — show empty
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -458,39 +478,3 @@ def _add_engagement(df):
     df["engagement_score"] = (r + rb * 2 + f).astype(int)
     return df
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# MOCK FALLBACKS
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _mock_posts(start_date=None, end_date=None):
-    posts = [
-        {"post_id":"p001","date":"2026-04-06","time":"11:08","datetime":datetime(2026,4,6,11,8),"text":"Great going Freedom Caucus. Proud of you!!! President DJT","sentiment":"POSITIVE","sentiment_score":0.94,"dominant_category":"Self-promotion","engagement_score":22825,"replies":1574,"reblogs":4835,"favourites":16414,"has_media":True,"is_president":True,"sp500_5min_before":6581.56,"sp500_5min_after":6590.99,"market_impact_pct":0.14,"post_type":"original"},
-        {"post_id":"p002","date":"2026-04-05","time":"12:03","datetime":datetime(2026,4,5,12,3),"text":"Open the Strait, you crazy bastards, or you'll be living in Hell - JUST WATCH!","sentiment":"NEGATIVE","sentiment_score":0.97,"dominant_category":"Threatening intl.","engagement_score":125335,"replies":22306,"reblogs":19346,"favourites":83683,"has_media":False,"is_president":True,"sp500_5min_before":6581.56,"sp500_5min_after":6562.50,"market_impact_pct":-0.29,"post_type":"original"},
-        {"post_id":"p003","date":"2026-04-04","time":"13:32","datetime":datetime(2026,4,4,13,32),"text":"178,000 new jobs, TRADE DEFICIT down 55%. THANK YOU MR. TARIFF! MAGA!!!","sentiment":"POSITIVE","sentiment_score":0.91,"dominant_category":"Enacting non-agg.","engagement_score":60557,"replies":3150,"reblogs":9820,"favourites":47587,"has_media":False,"is_president":True,"sp500_5min_before":6560.00,"sp500_5min_after":6572.00,"market_impact_pct":0.18,"post_type":"original"},
-        {"post_id":"p004","date":"2026-04-04","time":"14:05","datetime":datetime(2026,4,4,14,5),"text":"Remember when I gave Iran ten days to MAKE A DEAL or OPEN UP THE HORMUZ STRAIT.","sentiment":"NEGATIVE","sentiment_score":0.93,"dominant_category":"Threatening intl.","engagement_score":65339,"replies":6841,"reblogs":10745,"favourites":47753,"has_media":False,"is_president":True,"sp500_5min_before":6572.00,"sp500_5min_after":6553.00,"market_impact_pct":-0.29,"post_type":"original"},
-    ]
-    df = pd.DataFrame(posts)
-    df["datetime"] = pd.to_datetime(df["datetime"])
-    df["date"]     = pd.to_datetime(df["date"])
-    if start_date: df = df[df["date"] >= pd.to_datetime(start_date)]
-    if end_date:   df = df[df["date"] <= pd.to_datetime(end_date)]
-    return df.sort_values("datetime", ascending=False).reset_index(drop=True)
-
-def _mock_stock(index, days):
-    base = {"sp500":6500.0,"djt":8.80,"qqq":570.0,"gld":425.0,"tlt":86.0}
-    p = base.get(index, 6500.0); prices = [p]; dates = []
-    for i in range(days-1,-1,-1):
-        dates.append((datetime(2026,4,6)-timedelta(days=i)).strftime("%Y-%m-%d"))
-    for _ in range(days-1):
-        prices.append(round(prices[-1]*(1+np.random.normal(0,0.008)),2))
-    df = pd.DataFrame({"date":dates,"price":prices,"has_big_post":[False]*days})
-    df["pct_change"] = df["price"].pct_change().fillna(0).round(4)
-    return df
-
-def _mock_search(query, top_k):
-    posts = _mock_posts().to_dict("records")
-    kws   = query.lower().split()
-    scored = [(sum(1 for kw in kws if kw in p["text"].lower()) + random.uniform(0,.3), p) for p in posts]
-    scored.sort(key=lambda x: x[0], reverse=True)
-    return [{"post":p,"score":round(min(s/max(len(kws),1),1.0),2)} for s,p in scored[:top_k]]
