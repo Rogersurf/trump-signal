@@ -47,10 +47,23 @@ def is_api_alive() -> bool:
 def get_posts(start_date=None, end_date=None) -> pd.DataFrame:
     if _USE_REAL:
         try:
-            df = _client.get_full_data(
-                date_from=str(start_date) if start_date else None,
-                date_to=str(end_date) if end_date else None,
-            )
+            # use DATE() to handle datetime format in DB
+            import sqlite3, os
+            db = os.environ.get("TRUMP_DB_PATH",
+                 os.path.abspath(os.path.join(os.path.dirname(__file__),
+                 "..", "..", "backend_database", "trump_data.db")))
+            conn = sqlite3.connect(db)
+            query = "SELECT * FROM truth_social WHERE 1=1"
+            params = []
+            if start_date:
+                query += " AND DATE(date) >= ?"
+                params.append(str(start_date))
+            if end_date:
+                query += " AND DATE(date) <= ?"
+                params.append(str(end_date))
+            query += " ORDER BY datetime DESC LIMIT 500"
+            df = pd.read_sql(query, conn, params=params)
+            conn.close()
             if df.empty:
                 return pd.DataFrame()  # no mock — show empty
 
