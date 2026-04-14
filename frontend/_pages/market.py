@@ -49,6 +49,9 @@ def render(T: dict):
     else:
         st.caption(f"Showing **daily close price** · {chart_title}")
 
+    if df.empty:
+        st.warning("📭 No stock data available for this period.")
+        return
     st.plotly_chart(stock_line_chart(df, chart_title), use_container_width=True)
     st.caption("⭐ Red stars = posts with large market move (>0.3%)")
 

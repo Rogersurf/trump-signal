@@ -1,48 +1,73 @@
-"""pages/topics.py — Topic breakdown with date context"""
+"""pages/topics.py — Topic breakdown with custom date range"""
 import streamlit as st
+import pandas as pd
+import plotly.express as px
 from datetime import date, timedelta
 from frontend._data.api_client import get_category_summary
+from frontend.config import CATEGORY_COLORS
 
 def render(T: dict):
-    today = date.today()
+    today = date(2026, 4, 14)  # dataset max date
 
-    # Period selector with date context
-    col1, col2 = st.columns([2, 3])
+    st.caption("Topic classification is based on the dataset — no model training required.")
+
+    # ── Date range picker ─────────────────────────────────────────────────────
+    col1, col2 = st.columns(2)
     with col1:
-        period = st.radio(T["period"],
-                          [T["week"], T["month"], T["year"]],
-                          horizontal=True)
-
-    period_key = {
-        "Week": "week", "Month": "month", "Year": "year",
-        "สัปดาห์": "week", "เดือน": "month", "ปี": "year",
-        "周": "week", "月": "month", "年": "year",
-    }.get(period, "month")
-
-    # Show what date range this covers
-    if period_key == "week":
-        start = today - timedelta(days=7)
-        label = f"{start.strftime('%d %b')} – {today.strftime('%d %b %Y')}"
-    elif period_key == "month":
-        start = today - timedelta(days=30)
-        label = f"{start.strftime('%d %b')} – {today.strftime('%d %b %Y')}"
-    else:
-        start = today - timedelta(days=365)
-        label = f"{start.strftime('%d %b %Y')} – {today.strftime('%d %b %Y')}"
-
+        start = st.date_input(
+            "From",
+            key="topics_start",
+            value=date(2022, 1, 1),
+            min_value=date(2022, 1, 1),
+            max_value=today,
+            format="DD/MM/YYYY",
+        )
     with col2:
-        st.caption(f"Showing: {label}")
+        end = st.date_input(
+            "To",
+            key="topics_end",
+            value=today,
+            min_value=date(2022, 1, 1),
+            max_value=today,
+            format="DD/MM/YYYY",
+        )
 
-    df = get_category_summary(period_key)
+    if start > end:
+        st.error("Start date must be before end date.")
+        return
+
+    # ── Get data ──────────────────────────────────────────────────────────────
+    period_days = (end - start).days
+    if period_days <= 7:
+        period = "week"
+    elif period_days <= 30:
+        period = "month"
+    else:
+        period = "year"
+
+    df = get_category_summary(period, date_from=str(start), date_to=str(end))
 
     if df.empty:
-        st.info("No data available"); return
+        st.warning(f"📭 No topic data available between {start.strftime('%d %b %Y')} and {end.strftime('%d %b %Y')}.")
+        return
 
-    # Pie chart
-    from frontend._components.charts import pie_chart
-    import plotly.express as px
-    from frontend.config import CATEGORY_COLORS
+    df = df[df["count"] > 0].reset_index(drop=True)
 
+    # ── Metrics ───────────────────────────────────────────────────────────────
+    total   = df["count"].sum()
+    top_cat = df.loc[df["count"].idxmax(), "category"]
+    top_pct = round(df["count"].max() / total * 100, 1) if total > 0 else 0
+
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Total posts",    f"{total:,.0f}")
+    m2.metric("Top category",   top_cat)
+    m3.metric("Top category %", f"{top_pct}%")
+
+    st.caption(f"Showing: {start.strftime('%d %b %Y')} – {end.strftime('%d %b %Y')} · {(end-start).days} days")
+
+    st.divider()
+
+    # ── Pie chart ─────────────────────────────────────────────────────────────
     fig = px.pie(
         df, names="category", values="count",
         color="category",
@@ -56,10 +81,24 @@ def render(T: dict):
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    # Table
+    # ── Table ─────────────────────────────────────────────────────────────────
+    df_display = df.copy()
+    df_display["% of total"] = (df_display["count"] / total * 100).round(1).astype(str) + "%"
     st.dataframe(
-        df.sort_values("count", ascending=False)
-          .rename(columns={"category": T["category"], "count": "Posts"}),
+        df_display.sort_values("count", ascending=False)
+                  .rename(columns={"category": "Category", "count": "Posts"}),
         use_container_width=True,
         hide_index=True,
     )
+
+    # ── Export ────────────────────────────────────────────────────────────────
+    st.divider()
+    col_e1, col_e2 = st.columns(2)
+    with col_e1:
+        st.download_button(
+            label="⬇️ Export topic breakdown (CSV)",
+            data=df_display.to_csv(index=False),
+            file_name=f"trumpsignal_topics_{start}_{end}.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
