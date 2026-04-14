@@ -5,7 +5,13 @@ from frontend._data.api_client import get_gdelt_summary, get_gdelt_timeseries
 from frontend._components.charts import gdelt_tone_bar, gdelt_breakdown_bar
 
 def render(T: dict):
-    st.caption("GDELT global event database · updates weekly")
+    from datetime import date, timedelta
+    today     = date(2026, 4, 14)  # dataset max
+    month_start = today.replace(day=1)
+    st.caption(
+        f"GDELT global event database · updates weekly · "
+        f"Showing from {month_start.strftime('%d %b %Y')} to {today.strftime('%d %b %Y')}"
+    )
 
     gdelt = get_gdelt_summary()
     if not gdelt:
