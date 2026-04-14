@@ -1,16 +1,12 @@
-"""pages/feed.py"""
+"""pages/feed.py — Daily feed with real ML prediction"""
 import streamlit as st
+import pandas as pd
 from datetime import datetime, date, timedelta
 from frontend._data.api_client import get_posts
 from frontend._components.post_card import _detect_topics, _get_effects
 
-SENTIMENT_BADGE = {
-    "POSITIVE": ("#EAF3DE", "#27500A"),
-    "NEGATIVE": ("#FCEBEB", "#791F1F"),
-    "NEUTRAL":  ("#F1EFE8", "#444441"),
-}
-
 STOCK_OPTIONS = {
+    "all":   "All stocks",
     "sp500": "S&P 500",
     "qqq":   "QQQ (Nasdaq)",
     "djt":   "DJT (Trump Media)",
@@ -23,6 +19,19 @@ STOCK_OPTIONS = {
     "war":   "WAR ETF",
 }
 
+ALL_STOCKS = {
+    "sp500": "S&P 500",
+    "qqq":   "QQQ",
+    "djt":   "DJT",
+    "gld":   "Gold",
+    "tlt":   "Bonds",
+    "lmt":   "LMT",
+    "uso":   "Oil",
+    "ibit":  "Bitcoin",
+    "uup":   "Dollar",
+    "war":   "WAR",
+}
+
 CAT_SIGNALS = {
     "Threatening intl.":    ("🔴", "-0.28%"),
     "Attacking opposition": ("🟠", "-0.09%"),
@@ -32,72 +41,47 @@ CAT_SIGNALS = {
     "De-escalating":        ("🟢", "+0.11%"),
 }
 
-# ── Impact prediction — load Chenghao's model ────────────────────────────────
-# Loads once, cached so we don't reload on every post render
-_impact_cache: dict = {}   # post_id → impact_proba
+def _next_trading_day(d: date) -> date:
+    next_day = d + timedelta(days=1)
+    while next_day.weekday() >= 5:
+        next_day += timedelta(days=1)
+    return next_day
 
-def _load_impact_predictions(days: int = 30) -> dict:
+def _get_ml_prediction(selected_date: date) -> dict:
     """
-    Call predict_latest() from Chenghao's model_predict.py.
-    Returns dict of {content_snippet → impact_proba} for quick lookup.
-    Only runs on market-hours posts (model is trained on those only).
-    Falls back to empty dict silently if model files not found yet.
+    Get real ML prediction using predict_latest
+    Returns dict with impact, confidence, direction, next_day
     """
-    global _impact_cache
-    if _impact_cache:
-        return _impact_cache
     try:
         from backend.model_predict import predict_latest
-        df = predict_latest(days=days)
-        # key by first 80 chars of content — matches what feed uses as text
-        _impact_cache = {
-            str(row.get("content", ""))[:80]: float(row.get("impact_proba", 0.0))
-            for _, row in df.iterrows()
-        }
-    except FileNotFoundError:
-        # Model not trained yet — silent fallback
-        pass
+        # Use enough days to include selected_date in rolling window
+        days_back = (date.today() - selected_date).days + 14
+        result = predict_latest(days=max(days_back, 14))
+        if not result.empty:
+            # Find prediction for selected_date
+            result["date"] = result["date"].astype(str).str[:10]
+            row = result[result["date"] == str(selected_date)]
+            if not row.empty:
+                r = row.iloc[0]
+                proba = float(r["next_day_impact_proba"])
+                return {
+                    "impact":     "HIGH" if r["high_impact_pred"] == 1 else "LOW",
+                    "confidence": round(proba, 2),
+                    "direction":  "DOWN" if proba < 0.5 else "UP",
+                    "next_day":   _next_trading_day(selected_date),
+                    "is_mock":    False,
+                }
     except Exception as e:
-        print(f"[feed] impact model error: {e}")
-    return _impact_cache
-
-
-def _get_impact_badge(proba: float | None, during_market: bool) -> str:
-    """
-    Convert impact_proba to a badge string for display.
-    Only meaningful for market-hours posts.
-    """
-    if not during_market:
-        return ""
-    if proba is None:
-        return ""
-    if proba >= 0.6:
-        return "⚠️ HIGH IMPACT"
-    elif proba >= 0.4:
-        return "🟡 MODERATE"
-    else:
-        return "✅ LOW IMPACT"
-
-
-def _get_impact_color(proba: float | None) -> str:
-    if proba is None:
-        return "#888"
-    if proba >= 0.6:
-        return "#E24B4A"
-    elif proba >= 0.4:
-        return "#BA7517"
-    return "#1D9E75"
-
+        print(f"ML prediction error: {e}")
+    return None
 
 def _get_clock(tz_offset: int) -> str:
     now = datetime.utcnow() + timedelta(hours=tz_offset)
     return now.strftime("%H:%M:%S")
 
-
-def _get_market_status(tz_offset: int) -> tuple:
-    """Check if US market is open (9:30–16:00 ET = UTC-4)"""
+def _get_market_status() -> tuple:
     et_now = datetime.utcnow() - timedelta(hours=4)
-    is_weekday = et_now.weekday() < 5
+    is_weekday   = et_now.weekday() < 5
     market_open  = et_now.replace(hour=9,  minute=30, second=0)
     market_close = et_now.replace(hour=16, minute=0,  second=0)
     if is_weekday and market_open <= et_now <= market_close:
@@ -106,20 +90,27 @@ def _get_market_status(tz_offset: int) -> tuple:
 
 
 def render(T: dict, tz_offset: int):
-    today = date.today()
+    # get dataset max date dynamically
+    try:
+        import sqlite3
+        conn = sqlite3.connect('backend_database/trump_data.db')
+        ds_end = pd.to_datetime(conn.execute("SELECT MAX(date) FROM truth_social").fetchone()[0]).date()
+        conn.close()
+    except:
+        ds_end = date.today()
+    today  = min(date.today(), ds_end)
 
     # ── Live clock + market status ────────────────────────────────────────────
     clock_col, status_col, _ = st.columns([2, 2, 3])
     with clock_col:
-        clock = _get_clock(tz_offset)
         st.markdown(
             f'<p style="font-size:22px;font-weight:700;font-family:monospace;margin:0">'
-            f'{clock}</p>'
+            f'{_get_clock(tz_offset)}</p>'
             f'<p style="font-size:11px;color:#888;margin:0">UTC{tz_offset:+d}</p>',
             unsafe_allow_html=True,
         )
     with status_col:
-        status_text, status_color = _get_market_status(tz_offset)
+        status_text, status_color = _get_market_status()
         st.markdown(
             f'<p style="font-size:14px;font-weight:600;color:{status_color};margin:8px 0 0">'
             f'{status_text}</p>'
@@ -130,143 +121,131 @@ def render(T: dict, tz_offset: int):
     st.divider()
 
     # ── Controls ──────────────────────────────────────────────────────────────
-    c1, c2, c3 = st.columns([2, 2, 2])
+    c1, c2 = st.columns([2, 2])
     with c1:
-        start_date = st.date_input(
-            T["select_date"],
-            value=today - timedelta(days=7),
+        selected_date = st.date_input(
+            "Select date",
+            key="feed_date",
+            value=today,
             min_value=date(2022, 1, 1),
-            max_value=today,
+            max_value=ds_end,
             format="DD/MM/YYYY",
         )
     with c2:
-        end_date = st.date_input(
-            T["to"],
-            value=today,
-            min_value=date(2022, 1, 1),
-            max_value=today,
-            format="DD/MM/YYYY",
-        )
-    with c3:
         stock_key = st.selectbox(
             "Stock to track",
             options=list(STOCK_OPTIONS.keys()),
             format_func=lambda x: STOCK_OPTIONS[x],
         )
 
-    posts = get_posts(str(start_date), str(end_date))
+
+    # ── ML Prediction (daily level) ───────────────────────────────────────────
+    with st.spinner("Loading ML prediction..."):
+        pred = _get_ml_prediction(selected_date)
+
+    next_td = _next_trading_day(selected_date)
+
+    pred_box, _ = st.columns([3, 2])
+    with pred_box:
+        if pred:
+            impact_color = "#E24B4A" if pred["impact"] == "HIGH" else "#1D9E75"
+            dir_arrow    = "▲" if pred["direction"] == "UP" else "▼"
+            dir_color    = "#1D9E75" if pred["direction"] == "UP" else "#E24B4A"
+            st.markdown(
+                f'<div style="background:#f8f6f1;border-radius:8px;padding:14px;margin-bottom:12px">'
+                f'<p style="font-size:11px;color:#888;margin:0 0 4px">📊 ML prediction based on all posts from {selected_date.strftime("%d %b %Y")}</p>'
+                f'<span style="font-size:22px;font-weight:700;color:{impact_color}">{pred["impact"]} IMPACT</span>'
+                f'&nbsp;&nbsp;'
+                f'<span style="font-size:18px;font-weight:600;color:{dir_color}">{dir_arrow} {pred["direction"]}</span>'
+                f'<p style="font-size:12px;margin:4px 0 0">Probability: <b>{pred["confidence"]*100:.0f}%</b> · '
+                f'Predicting for: <b>{next_td.strftime("%a, %d %b %Y")}</b></p>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.info(f"📊 No ML prediction available for {selected_date.strftime('%d %b %Y')} — no posts found or model not ready.")
+
+    # ── Posts ─────────────────────────────────────────────────────────────────
+    posts = get_posts(str(selected_date), str(selected_date))
+
     if posts.empty:
-        st.info(T["no_results"])
-        st.caption("Note: dataset covers up to April 2026. Select dates within that range.")
+        if selected_date == today:
+            st.info("🕐 Trump hasn't posted anything today yet.")
+        else:
+            st.info(f"📭 Trump didn't post anything on {selected_date.strftime('%d %b %Y')}.")
         return
 
-    # Load impact predictions once for the whole feed
-    impact_map = _load_impact_predictions(days=30)
-    has_model  = bool(impact_map)
-
-    st.caption(f"{len(posts)} posts · UTC{tz_offset:+d} · {STOCK_OPTIONS[stock_key]}")
-    if has_model:
-        st.caption("⚠️ Impact badge = XGBoost binary classifier · market-hours posts only · threshold ≥ 0.6")
-    else:
-        st.caption("ℹ️ Impact model not loaded — run `backend.model_training` first to enable predictions")
+    st.caption(f"{len(posts)} posts · UTC{tz_offset:+d} · tracking {STOCK_OPTIONS[stock_key]}")
 
     for _, row in posts.iterrows():
-        sentiment = row.get("sentiment", "NEUTRAL")
         category  = row.get("dominant_category", "Other")
-        bg, fg    = SENTIMENT_BADGE.get(sentiment, ("#F1EFE8", "#444441"))
         text      = str(row.get("text", ""))
 
-        # Historical stock impact (real data from dataset)
-        try:
-            b = float(row.get(f"{stock_key}_5min_before", row.get("sp500_5min_before", 0)))
-            a = float(row.get(f"{stock_key}_5min_after",  row.get("sp500_5min_after",  0)))
-            impact       = round((a - b) / b * 100, 2) if b != 0 else 0
-            impact_str   = f"+{impact:.2f}%" if impact >= 0 else f"{impact:.2f}%"
-            impact_color = "#1D9E75" if impact >= 0 else "#E24B4A"
-        except:
-            impact_str = "N/A"; impact_color = "#888"
+        if stock_key == "all":
+            # show all stocks
+            stock_impacts = {}
+            for sk, sl in ALL_STOCKS.items():
+                try:
+                    b = float(row.get(f"{sk}_5min_before", 0))
+                    a = float(row.get(f"{sk}_5min_after",  0))
+                    if b != 0:
+                        stock_impacts[sl] = round((a - b) / b * 100, 2)
+                except:
+                    pass
+            impact_str   = "multiple"
+            impact_color = "#888"
+        else:
+            stock_impacts = {}
+            try:
+                b      = float(row.get(f"{stock_key}_5min_before", row.get("sp500_5min_before", 0)))
+                a      = float(row.get(f"{stock_key}_5min_after",  row.get("sp500_5min_after",  0)))
+                impact = round((a - b) / b * 100, 2) if b != 0 else 0
+                impact_str   = f"+{impact:.2f}%" if impact >= 0 else f"{impact:.2f}%"
+                impact_color = "#1D9E75" if impact >= 0 else "#E24B4A"
+            except:
+                impact_str = "N/A"; impact_color = "#888"
 
         try:
-            time_str = (row["datetime"] + timedelta(hours=tz_offset)).strftime("%d/%m/%Y %H:%M")
+            time_str  = (row["datetime"] + timedelta(hours=tz_offset)).strftime("%d/%m/%Y %H:%M")
         except:
-            time_str = str(row.get("date", ""))
-
-        # Binary impact prediction from Chenghao's XGBoost model
-        during_market = bool(row.get("during_market_hours", False))
-        text_key      = text[:80]
-        proba         = impact_map.get(text_key, None)
-        badge         = _get_impact_badge(proba, during_market)
-        badge_color   = _get_impact_color(proba)
+            time_str  = str(row.get("date", ""))
 
         topics  = _detect_topics(text)
         effects = _get_effects(topics)
 
         with st.container(border=True):
-            left, right = st.columns([3, 2])
-
-            # ── Left: post ────────────────────────────────────────────────────
-            with left:
-                st.caption(time_str)
-                st.markdown(
-                    f'<span style="background:{bg};color:{fg};padding:2px 8px;border-radius:3px;'
-                    f'font-size:11px;font-weight:600;text-transform:uppercase;margin-right:6px">'
-                    f'{sentiment}</span>'
-                    f'<span style="background:#EEEDFE;color:#3C3489;padding:2px 8px;'
-                    f'border-radius:3px;font-size:11px">{category}</span>',
-                    unsafe_allow_html=True,
-                )
-                st.markdown(f"> {text}")
-                st.caption(
-                    f"❤️ {row.get('favourites',0):,}  "
-                    f"🔁 {row.get('reblogs',0):,}  "
-                    f"💬 {row.get('replies',0):,}"
-                )
+            st.caption(time_str)
+            st.markdown(
+                f'<span style="background:#EEEDFE;color:#3C3489;padding:2px 8px;'
+                f'border-radius:3px;font-size:11px">{category}</span>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(f"> {text}" if text else "*[Media post — no text content]*")
+            st.caption(
+                f"❤️ {row.get('favourites',0):,}  "
+                f"🔁 {row.get('reblogs',0):,}  "
+                f"💬 {row.get('replies',0):,}"
+            )
+            if stock_key == "all" and stock_impacts:
+                cols_s = st.columns(len(stock_impacts))
+                for idx_s, (sl, sv) in enumerate(stock_impacts.items()):
+                    col_s = "#1D9E75" if sv >= 0 else "#E24B4A"
+                    cols_s[idx_s].markdown(
+                        f'<p style="font-size:11px;margin:0;color:#888">{sl}</p>'
+                        f'<p style="font-size:13px;font-weight:700;margin:0;color:{col_s}">'
+                        f'{sv:+.2f}%</p>',
+                        unsafe_allow_html=True,
+                    )
+            else:
                 st.markdown(
                     f'<p style="font-weight:700;font-size:13px;color:{impact_color};margin:4px 0">'
                     f'{STOCK_OPTIONS[stock_key]} {impact_str} after post</p>',
                     unsafe_allow_html=True,
                 )
-                if topics:
-                    st.caption("Topics: " + " · ".join(topics))
-                if effects:
-                    st.caption("May affect: " + " · ".join(effects[:2]))
-                if category in CAT_SIGNALS:
-                    icon, avg = CAT_SIGNALS[category]
-                    st.info(f"{icon} Category avg: S&P {avg} in 5 min")
-
-            # ── Right: ML impact prediction ───────────────────────────────────
-            with right:
-                st.markdown("**Market Impact Prediction**")
-
-                if not during_market:
-                    # Post outside market hours — model doesn't apply
-                    st.markdown(
-                        '<p style="color:#888;font-size:12px;margin:4px 0">'
-                        '🕐 Posted outside market hours<br>'
-                        'Impact prediction not applicable</p>',
-                        unsafe_allow_html=True,
-                    )
-                elif proba is not None:
-                    # Real prediction from XGBoost model
-                    st.markdown(
-                        f'<p style="font-size:26px;font-weight:700;color:{badge_color};margin:4px 0">'
-                        f'{badge}</p>',
-                        unsafe_allow_html=True,
-                    )
-                    st.markdown(
-                        f'<p style="font-size:13px;color:#555;margin:2px 0">'
-                        f'Probability: <b>{proba:.0%}</b></p>',
-                        unsafe_allow_html=True,
-                    )
-                    st.caption(
-                        "XGBoost classifier · 5-min window · market-hours posts only · "
-                        "HIGH = prob ≥ 60%"
-                    )
-                else:
-                    # Market hours post but not in prediction window
-                    st.markdown(
-                        '<p style="color:#888;font-size:12px;margin:4px 0">'
-                        '📊 Market hours post<br>'
-                        'Outside prediction window</p>',
-                        unsafe_allow_html=True,
-                    )
+            if topics:
+                st.caption("Topics: " + " · ".join(topics))
+            if effects:
+                st.caption("May affect: " + " · ".join(effects[:2]))
+            if category in CAT_SIGNALS:
+                icon, avg = CAT_SIGNALS[category]
+                st.info(f"{icon} Category avg: S&P {avg} in 5 min")
