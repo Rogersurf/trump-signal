@@ -25,9 +25,10 @@ RUN pip install -e .
 # Initialize SQLite database (lightweight, can be on persistent storage or ephemeral)
 RUN python backend_database/init_db.py --db-path $TRUMPPULSE_DATA_DIR/trump_data.db
 
+
 # Build initial embeddings into ChromaDB (only if the collection is empty)
 RUN python backend_database/build_embeddings.py
 
 EXPOSE 8000 7860
 
-CMD ["sh", "-c", "uvicorn app.api.main:app --host 0.0.0.0 --port 8000 & streamlit run frontend/streamlitapp.py --server.port 7860 --server.address 0.0.0.0"]
+CMD ["sh", "-c", "python backend_database/backgroud_update.py & uvicorn app.api.main:app --host 0.0.0.0 --port 8000 & streamlit run frontend/streamlitapp.py --server.port 7860 --server.address 0.0.0.0"]
