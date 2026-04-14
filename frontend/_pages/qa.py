@@ -34,18 +34,22 @@ def render(T: dict):
             impact     = post.get("market_impact_pct", 0.0)
             impact_str = f"+{impact:.2f}%" if impact >= 0 else f"{impact:.2f}%"
             impact_color = "#1D9E75" if impact >= 0 else "#E24B4A"
-            sent      = post.get("sentiment", "NEUTRAL")
-            sent_icon = "🟢" if sent == "POSITIVE" else ("🔴" if sent == "NEGATIVE" else "⚪")
+
             relevance = round(score * 100, 0)
 
             with st.container(border=True):
                 # ── Header row ────────────────────────────────────────────────
                 h1, h2, h3 = st.columns([3, 2, 1])
                 with h1:
-                    st.caption(f"#{i} · {post.get('date', '')}")
+                    url = post.get("url", "")
+                    date_str = str(post.get("date", ""))[:10]
+                    if url:
+                        st.markdown(f"#{i} · {date_str} · [View on Truth Social]({url})")
+                    else:
+                        st.caption(f"#{i} · {date_str}")
                 with h2:
                     st.markdown(
-                        f"{sent_icon} **{sent}** · {post.get('dominant_category', '')}",
+                        f"**{post.get('dominant_category', 'Other')}**",
                     )
                 with h3:
                     st.markdown(
