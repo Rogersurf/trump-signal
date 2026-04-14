@@ -1,67 +1,61 @@
 """pages/geopolitical.py — Geopolitical with month/year selector"""
 import streamlit as st
 import pandas as pd
+import requests
 from datetime import date, timedelta
 from frontend._data.api_client import get_gdelt_timeseries
 from frontend._components.charts import gdelt_tone_bar, gdelt_breakdown_bar
+from frontend.config import API_URL
+
 
 def _get_available_dates():
-    """Get min/max dates from DB directly — always up to date"""
+    """Fetch min/max dates from the API."""
     try:
-        import sqlite3, os
-        db = os.environ.get("TRUMP_DB_PATH",
-             os.path.abspath(os.path.join(os.path.dirname(__file__),
-             "..", "..", "backend_database", "trump_data.db")))
-        conn = sqlite3.connect(db)
-        min_d = conn.execute("SELECT MIN(date) FROM truth_social").fetchone()[0]
-        max_d = conn.execute("SELECT MAX(date) FROM truth_social").fetchone()[0]
-        conn.close()
-        return pd.to_datetime(min_d).date(), pd.to_datetime(max_d).date()
+        r = requests.get(f"{API_URL}/data/available_dates", timeout=5)
+        if r.status_code == 200:
+            data = r.json()
+            return pd.to_datetime(data["min_date"]).date(), pd.to_datetime(data["max_date"]).date()
     except Exception as e:
         print(f"_get_available_dates error: {e}")
-        return date(2022, 1, 1), date.today()
+    return date(2022, 1, 1), date.today()
+
 
 def _get_gdelt_for_range(start: date, end: date) -> pd.DataFrame:
-    """Get GDELT data for a specific date range"""
+    """Fetch GDELT trend data from the API."""
     try:
-        from backend_database.data_api import TrumpDataClient
-        c  = TrumpDataClient()
-        df = c.get_gdelt_trend(
-            start=start.strftime("%Y-%m-%d"),
-            end=end.strftime("%Y-%m-%d")
+        r = requests.get(
+            f"{API_URL}/gdelt/range",
+            params={"start": start.strftime("%Y-%m-%d"), "end": end.strftime("%Y-%m-%d")},
+            timeout=10
         )
-        if df.empty:
-            return pd.DataFrame()
-        df["day"] = pd.to_datetime(df["day"])
-        df["week"] = df["day"].dt.strftime("%d %b")
-        df["avg_tone"] = df["gdelt_avg_tone"].round(2)
-        df["verbal_conflict"] = df["gdelt_verbal_conflict"].fillna(0).round(0).astype(int)
-        return df
+        if r.status_code == 200:
+            data = r.json()
+            if isinstance(data, list) and data:
+                df = pd.DataFrame(data)
+                df["day"] = pd.to_datetime(df["day"])
+                df["week"] = df["day"].dt.strftime("%d %b")
+                df["avg_tone"] = df["gdelt_avg_tone"].round(2)
+                df["verbal_conflict"] = df["gdelt_verbal_conflict"].fillna(0).round(0).astype(int)
+                return df
     except Exception as e:
         print(f"GDELT range error: {e}")
-        return pd.DataFrame()
+    return pd.DataFrame()
 
-def _build_summary(df: pd.DataFrame) -> dict:
-    """Build summary dict from a DataFrame"""
-    if df.empty:
-        return {}
-    return {
-        "week_of":            df["day"].max().strftime("%d %b %Y"),
-        "military_events":    int(df["gdelt_military"].fillna(0).sum()),
-        "verbal_conflict":    int(df["gdelt_verbal_conflict"].fillna(0).sum()),
-        "verbal_cooperation": int(df["gdelt_verbal_cooperation"].fillna(0).sum()),
-        "material_conflict":  int(df["gdelt_material_conflict"].fillna(0).sum()),
-        "diplomatic":         0,
-        "goldstein_avg":      round(float(df["gdelt_goldstein_avg"].fillna(0).mean()), 2),
-        "avg_tone":           round(float(df["gdelt_avg_tone"].fillna(0).mean()), 2),
-        "total_events":       int(df["gdelt_total_events"].fillna(0).sum()),
-        "interpretation": (
-            "Global tension elevated — verbal conflict high."
-            if df["gdelt_avg_tone"].mean() < -2 else
-            "Moderate tension detected." if df["gdelt_avg_tone"].mean() < -1 else
-            "Global tone relatively neutral."
-        ),
-    }
+
+def _get_gdelt_summary(start: date, end: date) -> dict:
+    """Fetch GDELT summary from the API."""
+    try:
+        r = requests.get(
+            f"{API_URL}/gdelt/summary",
+            params={"start": start.strftime("%Y-%m-%d"), "end": end.strftime("%Y-%m-%d")},
+            timeout=10
+        )
+        if r.status_code == 200:
+            return r.json()
+    except Exception as e:
+        print(f"GDELT summary error: {e}")
+    return {}
+
 
 def render(T: dict):
     st.caption("GDELT global event database · updates weekly · real data from dataset")
@@ -82,17 +76,15 @@ def render(T: dict):
         end   = max_date
 
     elif period == "By month":
-        # Build list of available months
         months = []
         d = min_date.replace(day=1)
         while d <= max_date.replace(day=1):
             months.append(d)
-            # next month
             if d.month == 12:
                 d = d.replace(year=d.year+1, month=1)
             else:
                 d = d.replace(month=d.month+1)
-        months.reverse()  # latest first
+        months.reverse()
 
         selected_month = st.selectbox(
             "Select month",
@@ -100,7 +92,6 @@ def render(T: dict):
             format_func=lambda d: d.strftime("%B %Y"),
         )
         start = selected_month
-        # last day of month
         if selected_month.month == 12:
             end = selected_month.replace(year=selected_month.year+1, month=1, day=1) - timedelta(days=1)
         else:
@@ -126,20 +117,20 @@ def render(T: dict):
 
     # ── Get data ──────────────────────────────────────────────────────────────
     df = _get_gdelt_for_range(start, end)
+    gdelt = _get_gdelt_summary(start, end)
 
-    if df.empty:
+    if df.empty or not gdelt:
         st.warning(f"📭 No GDELT data available for this period.")
         return
 
-    gdelt   = _build_summary(df)
     plot_df = df[["week", "avg_tone", "verbal_conflict"]].reset_index(drop=True)
 
     # ── Metrics ───────────────────────────────────────────────────────────────
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Military events",    f"{gdelt['military_events']:,}")
-    c2.metric("Verbal conflict",    f"{gdelt['verbal_conflict']:,}")
-    c3.metric("Verbal cooperation", f"{gdelt['verbal_cooperation']:,}")
-    c4.metric("Avg global tone",    f"{gdelt['avg_tone']:.2f}",
+    c1.metric("Military events",    f"{gdelt.get('military_events', 0):,}")
+    c2.metric("Verbal conflict",    f"{gdelt.get('verbal_conflict', 0):,}")
+    c3.metric("Verbal cooperation", f"{gdelt.get('verbal_cooperation', 0):,}")
+    c4.metric("Avg global tone",    f"{gdelt.get('avg_tone', 0):.2f}",
               help="Negative = more conflict globally")
 
     st.divider()
@@ -148,10 +139,10 @@ def render(T: dict):
     st.subheader(f"Global tone · {period}")
     st.plotly_chart(gdelt_tone_bar(plot_df), use_container_width=True)
 
-    st.subheader(f"Signal breakdown · {gdelt['week_of']}")
+    st.subheader(f"Signal breakdown · {gdelt.get('week_of', '')}")
     st.plotly_chart(gdelt_breakdown_bar(gdelt), use_container_width=True)
 
-    st.info(f"**Interpretation:** {gdelt['interpretation']}")
+    st.info(f"**Interpretation:** {gdelt.get('interpretation', '')}")
 
     # ── Export ────────────────────────────────────────────────────────────────
     st.divider()
