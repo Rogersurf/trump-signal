@@ -250,8 +250,9 @@ def get_gdelt_range(start: str, end: str):
         df = client.get_gdelt_trend(start=start, end=end)
         if df.empty:
             return []
-        # Convert to dict for JSON response
         df["day"] = pd.to_datetime(df["day"]).dt.strftime("%Y-%m-%d")
+        # Replace NaN with None (JSON compliant)
+        df = df.replace({np.nan: None})
         return df.to_dict(orient="records")
     except Exception as e:
         return {"error": str(e)}

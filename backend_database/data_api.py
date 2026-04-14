@@ -388,6 +388,42 @@ class TrumpDataClient:
             "dia_5min_pct", "dia_1hr_pct",
         ]]
 
+        def get_stock_series(self, index: str = "sp500", days: int = 30) -> pd.DataFrame:
+        """
+        Return stock series data for the given index.
+        Uses 5-min % change for sp500/qqq/dia, and daily close prices for others.
+        """
+        from datetime import datetime, timedelta
+        end_date = datetime.now().strftime("%Y-%m-%d")
+        start_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+
+        # For indices that have 5-min impact data
+        if index in ("sp500", "qqq", "dia"):
+            df = self.get_market_impact(start=start_date, end=end_date)
+            if not df.empty:
+                col = f"{index}_5min_pct"
+                if col in df.columns:
+                    result = df[["date", col]].copy()
+                    result = result.rename(columns={col: "price"})
+                    result["price"] = pd.to_numeric(result["price"], errors="coerce")
+                    result["has_big_post"] = result["price"].abs() > 0.3
+                    result["pct_change"] = result["price"].round(4)
+                    return result.dropna(subset=["price"]).reset_index(drop=True)
+
+        # Fallback for other indices (use daily close prices)
+        close_col = f"{index}_close"
+        dm = self.get_daily_metrics(date_from=start_date, date_to=end_date)
+        if not dm.empty and close_col in dm.columns:
+            result = dm[["day", close_col]].copy()
+            result = result.rename(columns={"day": "date", close_col: "price"})
+            result["price"] = pd.to_numeric(result["price"], errors="coerce")
+            result["has_big_post"] = False
+            result["pct_change"] = result["price"].pct_change().fillna(0).round(4)
+            return result.dropna(subset=["price"]).reset_index(drop=True)
+
+        # Return empty DataFrame with expected columns
+        return pd.DataFrame(columns=["date", "price", "has_big_post", "pct_change"])
+
     def get_category_market_impact(
             self,
             start: str = (datetime.date.today() - datetime.timedelta(days=1)).isoformat(),
