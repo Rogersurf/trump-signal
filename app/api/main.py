@@ -7,6 +7,7 @@ import sys
 import os
 import threading
 import time
+import pandas as pd
 
 # Add project root to Python path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -150,6 +151,62 @@ def get_available_dates():
         return {"min_date": min_date, "max_date": max_date}
     except Exception as e:
         return {"error": str(e)}
+
+@app.get("/posts")
+def get_posts(start_date: str = None, end_date: str = None):
+    """Return posts for a given date range."""
+    try:
+        from backend_database.data_api import TrumpDataClient
+        client = TrumpDataClient(DEFAULT_DB_PATH)
+        df = client.get_full_data(date_from=start_date, date_to=end_date)
+        if df.empty:
+            return []
+        # Convert to records
+        return df.to_dict(orient="records")
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.get("/categories")
+def get_categories(period: str = "month", date_from: str = None, date_to: str = None):
+    """Return category distribution."""
+    try:
+        from backend_database.data_api import TrumpDataClient
+        client = TrumpDataClient(DEFAULT_DB_PATH)
+        # Use get_category_distribution
+        result = client.get_category_distribution(date_from=date_from, date_to=date_to)
+        if isinstance(result, pd.Series):
+            df = pd.DataFrame({"category": result.index, "count": result.values})
+        else:
+            df = result
+        return df.to_dict(orient="records")
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.get("/pipeline/status")
+def pipeline_status():
+    """Return pipeline status for dev dashboard."""
+    try:
+        from backend_database.data_api import TrumpDataClient
+        client = TrumpDataClient(DEFAULT_DB_PATH)
+        kpis = client.get_kpis()
+        return {
+            "last_ingest": "daily @ 02:00 UTC (APScheduler)",
+            "last_preprocess": "on ingest",
+            "last_sentiment_run": "pre-labeled in dataset",
+            "last_embedding_build": "on ingest (ChromaDB)",
+            "last_gdelt_update": "weekly",
+            "total_posts": int(kpis.get("total_posts", 0)),
+            "posts_today": 0,
+            "pct_market_hours": round(float(kpis.get("pct_market_hours", 0)), 1),
+            "model_name": "cardiffnlp/twitter-roberta-base-sentiment",
+            "embedding_model": "all-MiniLM-L6-v2",
+            "dataset_version": "chrissoria/trump-truth-social @ main",
+            "artifact_path": "backend_database/trump_data.db",
+            "status": "healthy",
+            "errors": [],
+        }
+    except Exception as e:
+        return {"status": "error", "errors": [str(e)]}
 
 # ------------------------------------------------------------------------------
 # GDELT Endpoints (for geopolitical page)

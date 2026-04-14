@@ -18,12 +18,15 @@ def render(T: dict):
                 st.code(e)
 
     # ── Metrics ───────────────────────────────────────────────────────────────
+    total = status.get('total_posts', 0)
+    posts_today = status.get('posts_today', 0)
+    pct_mh = status.get('pct_market_hours', 0)
+
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric(T["total_posts"],  f"{status['total_posts']:,}")
-    c2.metric(T["posts_today"],  status["posts_today"])
-    c3.metric("Market-hours posts", f"{status.get('pct_market_hours', 0)}%",
-              help="Posts made while NYSE was open — used for market impact analysis")
-    c4.metric("GDELT updated",   "Weekly", help=status["last_gdelt_update"])
+    c1.metric(T["total_posts"],  f"{total:,}" if total else "N/A")
+    c2.metric(T["posts_today"],  posts_today if posts_today else "N/A")
+    c3.metric("Market-hours posts", f"{pct_mh}%")
+    c4.metric("GDELT updated",   "Weekly")
 
     st.divider()
 

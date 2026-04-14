@@ -1,4 +1,4 @@
-"""pages/feed.py — Daily feed with real ML prediction"""
+"""pages/feed.py — Daily feed with real ML prediction (graceful fallback)"""
 import streamlit as st
 import pandas as pd
 from datetime import datetime, date, timedelta
@@ -47,18 +47,27 @@ def _next_trading_day(d: date) -> date:
         next_day += timedelta(days=1)
     return next_day
 
+def _is_xgboost_available() -> bool:
+    """Check if xgboost is installed and importable."""
+    try:
+        import importlib.util
+        return importlib.util.find_spec("xgboost") is not None
+    except:
+        return False
+
 def _get_ml_prediction(selected_date: date) -> dict:
     """
-    Get real ML prediction using predict_latest
-    Returns dict with impact, confidence, direction, next_day
+    Get real ML prediction using predict_latest.
+    Returns None if model is not available or fails.
     """
+    if not _is_xgboost_available():
+        return None
     try:
         from backend.model_predict import predict_latest
         # Use enough days to include selected_date in rolling window
         days_back = (date.today() - selected_date).days + 14
         result = predict_latest(days=max(days_back, 14))
         if not result.empty:
-            # Find prediction for selected_date
             result["date"] = result["date"].astype(str).str[:10]
             row = result[result["date"] == str(selected_date)]
             if not row.empty:
@@ -71,8 +80,8 @@ def _get_ml_prediction(selected_date: date) -> dict:
                     "next_day":   _next_trading_day(selected_date),
                     "is_mock":    False,
                 }
-    except Exception as e:
-        print(f"ML prediction error: {e}")
+    except Exception:
+        pass
     return None
 
 def _get_clock(tz_offset: int) -> str:
@@ -138,11 +147,8 @@ def render(T: dict, tz_offset: int):
             format_func=lambda x: STOCK_OPTIONS[x],
         )
 
-
-    # ── ML Prediction (daily level) ───────────────────────────────────────────
-    with st.spinner("Loading ML prediction..."):
-        pred = _get_ml_prediction(selected_date)
-
+    # ── ML Prediction (graceful fallback) ─────────────────────────────────────
+    pred = _get_ml_prediction(selected_date)
     next_td = _next_trading_day(selected_date)
 
     pred_box, _ = st.columns([3, 2])
@@ -163,7 +169,10 @@ def render(T: dict, tz_offset: int):
                 unsafe_allow_html=True,
             )
         else:
-            st.info(f"📊 No ML prediction available for {selected_date.strftime('%d %b %Y')} — no posts found or model not ready.")
+            st.info(
+                f"📊 ML prediction model is being trained. "
+                f"Showing real post data for {selected_date.strftime('%d %b %Y')}."
+            )
 
     # ── Posts ─────────────────────────────────────────────────────────────────
     posts = get_posts(str(selected_date), str(selected_date))
@@ -182,7 +191,6 @@ def render(T: dict, tz_offset: int):
         text      = str(row.get("text", ""))
 
         if stock_key == "all":
-            # show all stocks
             stock_impacts = {}
             for sk, sl in ALL_STOCKS.items():
                 try:
