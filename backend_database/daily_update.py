@@ -7,7 +7,7 @@ import sys
 import os
 from datetime import datetime
 from datasets import load_dataset
-from apscheduler.schedulers.blocking import BlockingScheduler
+from apscheduler.schedulers.background import BackgroundScheduler
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -47,6 +47,17 @@ def sync_task():
         print(f"[{now}] Sync error: {e}")
 
 
+def activate():
+    """Activate the daily sync scheduler."""
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(sync_task, 'cron', hour=2, minute=0)
+    print(f"Update scheduler started [Target: {DEFAULT_DB_PATH}]")
+    print("Running in background...")
+    try:
+        scheduler.start()
+    except (KeyboardInterrupt, SystemExit):
+        print("Scheduler stopped.")
+
 if __name__ == "__main__":
     # Check if database exists (should be created by init_db.py)
     if not os.path.exists(DEFAULT_DB_PATH):
@@ -60,7 +71,7 @@ if __name__ == "__main__":
         sys.exit(0)
 
     # Scheduler mode (runs daily at 02:00)
-    scheduler = BlockingScheduler()
+    scheduler = BackgroundScheduler()
     scheduler.add_job(sync_task, 'cron', hour=2, minute=0)
     print(f"Update scheduler started [Target: {DEFAULT_DB_PATH}]")
     print("Running in background...")
