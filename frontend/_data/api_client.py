@@ -81,7 +81,7 @@ def get_posts(start_date=None, end_date=None) -> pd.DataFrame:
         except Exception as e:
             print(f"get_posts error: {e}")
 
-    return _mock_posts(start_date, end_date)
+    return pd.DataFrame()  # empty = no data
 
 
 def get_sentiments() -> pd.DataFrame:
@@ -174,40 +174,52 @@ def get_stock_series(index: str = "sp500", days: int = 30) -> pd.DataFrame:
 def get_gdelt_summary() -> dict:
     if _USE_REAL:
         try:
-            df = _client.get_gdelt_events()
-            if not df.empty:
-                row  = df.iloc[-1]
-                # get_gdelt_events returns: military, sanctions, protest, tone, total_events
-                tone = float(row.get("tone", 0) or row.get("gdelt_avg_tone", 0) or 0)
-                interp = (
-                    "Global tension elevated — verbal conflict high, world already tense when Trump posted."
-                    if tone < -2 else
-                    "Moderate tension detected this week." if tone < -1 else
-                    "Global tone relatively neutral this week."
+            # use get_gdelt_trend — dynamic max date, no hardcode
+            all_df = _client.get_gdelt_trend(start="2020-01-01", end="2099-12-31")
+            if not all_df.empty:
+                max_date = pd.to_datetime(all_df["day"]).max()
+                start    = (max_date - timedelta(days=7)).strftime("%Y-%m-%d")
+                df       = _client.get_gdelt_trend(
+                    start=start,
+                    end=max_date.strftime("%Y-%m-%d")
                 )
-                return {
-                    "week_of":            str(row.get("day", "Latest")),
-                    "military_events":    int(row.get("military",          row.get("gdelt_military", 0)) or 0),
-                    "verbal_conflict":    int(row.get("protest",           row.get("gdelt_verbal_conflict", 0)) or 0),
-                    "verbal_cooperation": int(row.get("gdelt_verbal_cooperation", 0) or 0),
-                    "material_conflict":  int(row.get("sanctions",         row.get("gdelt_material_conflict", 0)) or 0),
-                    "diplomatic":         int(row.get("gdelt_diplomatic",  0) or 0),
-                    "goldstein_avg":      round(float(row.get("gdelt_goldstein_avg", 0) or 0), 2),
-                    "avg_tone":           round(tone, 2),
-                    "total_events":       int(row.get("total_events",      row.get("gdelt_total_events", 0)) or 0),
-                    "interpretation":     interp,
-                }
+                if not df.empty:
+                    row  = df.iloc[-1]
+                    tone = float(row.get("gdelt_avg_tone", 0) or 0)
+                    interp = (
+                        "Global tension elevated — verbal conflict high."
+                        if tone < -2 else
+                        "Moderate tension detected this week." if tone < -1 else
+                        "Global tone relatively neutral this week."
+                    )
+                    return {
+                        "week_of":            str(max_date.strftime("%d %b %Y")),
+                        "military_events":    int(row.get("gdelt_military",           0) or 0),
+                        "verbal_conflict":    int(row.get("gdelt_verbal_conflict",    0) or 0),
+                        "verbal_cooperation": int(row.get("gdelt_verbal_cooperation", 0) or 0),
+                        "material_conflict":  int(row.get("gdelt_material_conflict",  0) or 0),
+                        "diplomatic":         int(row.get("gdelt_diplomatic",         0) or 0),
+                        "goldstein_avg":      round(float(row.get("gdelt_goldstein_avg", 0) or 0), 2),
+                        "avg_tone":           round(tone, 2),
+                        "total_events":       int(row.get("gdelt_total_events",       0) or 0),
+                        "interpretation":     interp,
+                    }
         except Exception as e:
             print(f"get_gdelt_summary error: {e}")
-
     return {}
 
 
 def get_gdelt_timeseries(weeks: int = 8) -> pd.DataFrame:
     if _USE_REAL:
         try:
-            end   = datetime.now().strftime("%Y-%m-%d")
-            start = (datetime.now() - timedelta(weeks=weeks)).strftime("%Y-%m-%d")
+            weeks = max(weeks, 4)
+            # get latest date from dataset dynamically — no hardcode
+            all_df = _client.get_gdelt_trend(start="2020-01-01", end="2099-12-31")
+            if all_df.empty:
+                return pd.DataFrame(columns=["week", "avg_tone", "verbal_conflict"])
+            max_date = pd.to_datetime(all_df["day"]).max()
+            end   = max_date.strftime("%Y-%m-%d")
+            start = (max_date - timedelta(weeks=weeks)).strftime("%Y-%m-%d")
             df    = _client.get_gdelt_trend(start=start, end=end)
             if not df.empty:
                 # get_gdelt_trend returns: day, gdelt_avg_tone, gdelt_verbal_conflict, ...
