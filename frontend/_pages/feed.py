@@ -186,39 +186,52 @@ def render(T: dict, tz_offset: int):
 
     st.caption(f"{len(posts)} posts · UTC{tz_offset:+d} · tracking {STOCK_OPTIONS[stock_key]}")
 
-    for _, row in posts.iterrows():
-        category  = row.get("dominant_category", "Other")
-        text      = str(row.get("text", ""))
+        for _, row in posts.iterrows():
+        # Safely extract values with defaults
+        text = str(row.get("text", "")) if pd.notna(row.get("text")) else ""
+        category = row.get("dominant_category", "Other")
+        if pd.isna(category) or not category:
+            category = "Other"
 
+        # Handle datetime safely
+        dt_val = row.get("datetime")
+        try:
+            dt_obj = pd.to_datetime(dt_val)
+            time_str = (dt_obj + timedelta(hours=tz_offset)).strftime("%d/%m/%Y %H:%M")
+        except:
+            time_str = str(row.get("date", ""))
+
+        # Engagement metrics with safe defaults
+        favs = int(row.get("favourites", 0) or 0)
+        reblogs = int(row.get("reblogs", 0) or 0)
+        replies = int(row.get("replies", 0) or 0)
+
+        # Stock impact
         if stock_key == "all":
             stock_impacts = {}
             for sk, sl in ALL_STOCKS.items():
                 try:
-                    b = float(row.get(f"{sk}_5min_before", 0))
-                    a = float(row.get(f"{sk}_5min_after",  0))
+                    b = float(row.get(f"{sk}_5min_before", 0) or 0)
+                    a = float(row.get(f"{sk}_5min_after", 0) or 0)
                     if b != 0:
                         stock_impacts[sl] = round((a - b) / b * 100, 2)
                 except:
                     pass
-            impact_str   = "multiple"
+            impact_str = "multiple"
             impact_color = "#888"
         else:
             stock_impacts = {}
             try:
-                b      = float(row.get(f"{stock_key}_5min_before", row.get("sp500_5min_before", 0)))
-                a      = float(row.get(f"{stock_key}_5min_after",  row.get("sp500_5min_after",  0)))
+                b = float(row.get(f"{stock_key}_5min_before", row.get("sp500_5min_before", 0)) or 0)
+                a = float(row.get(f"{stock_key}_5min_after", row.get("sp500_5min_after", 0)) or 0)
                 impact = round((a - b) / b * 100, 2) if b != 0 else 0
-                impact_str   = f"+{impact:.2f}%" if impact >= 0 else f"{impact:.2f}%"
+                impact_str = f"+{impact:.2f}%" if impact >= 0 else f"{impact:.2f}%"
                 impact_color = "#1D9E75" if impact >= 0 else "#E24B4A"
             except:
-                impact_str = "N/A"; impact_color = "#888"
+                impact_str = "N/A"
+                impact_color = "#888"
 
-        try:
-            time_str  = (row["datetime"] + timedelta(hours=tz_offset)).strftime("%d/%m/%Y %H:%M")
-        except:
-            time_str  = str(row.get("date", ""))
-
-        topics  = _detect_topics(text)
+        topics = _detect_topics(text)
         effects = _get_effects(topics)
 
         with st.container(border=True):
@@ -229,11 +242,8 @@ def render(T: dict, tz_offset: int):
                 unsafe_allow_html=True,
             )
             st.markdown(f"> {text}" if text else "*[Media post — no text content]*")
-            st.caption(
-                f"❤️ {row.get('favourites',0):,}  "
-                f"🔁 {row.get('reblogs',0):,}  "
-                f"💬 {row.get('replies',0):,}"
-            )
+            st.caption(f"❤️ {favs:,}  🔁 {reblogs:,}  💬 {replies:,}")
+
             if stock_key == "all" and stock_impacts:
                 cols_s = st.columns(len(stock_impacts))
                 for idx_s, (sl, sv) in enumerate(stock_impacts.items()):
