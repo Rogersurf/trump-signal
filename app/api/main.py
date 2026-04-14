@@ -157,8 +157,26 @@ def get_posts(start_date: str = None, end_date: str = None):
     """Return posts for a given date range, formatted for frontend."""
     try:
         from backend_database.data_api import TrumpDataClient
+        from datetime import datetime
+
+        # Helper to convert various date inputs to YYYY-MM-DD
+        def _parse_date(date_str: str) -> str | None:
+            if not date_str:
+                return None
+            # Try common formats
+            for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%Y%m%d"):
+                try:
+                    return datetime.strptime(date_str, fmt).strftime("%Y-%m-%d")
+                except ValueError:
+                    continue
+            # If all fail, return original (might already be correct)
+            return date_str
+
+        start = _parse_date(start_date)
+        end = _parse_date(end_date)
+
         client = TrumpDataClient(DEFAULT_DB_PATH)
-        df = client.get_full_data(date_from=start_date, date_to=end_date)
+        df = client.get_full_data(date_from=start, date_to=end)
         if df.empty:
             return []
         
@@ -190,7 +208,6 @@ def get_posts(start_date: str = None, end_date: str = None):
         if "post_type" not in df.columns:
             df["post_type"] = "original"
         
-        # Convert to records
         records = df.to_dict(orient="records")
         return records
     except Exception as e:
