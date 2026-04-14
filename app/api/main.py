@@ -154,15 +154,45 @@ def get_available_dates():
 
 @app.get("/posts")
 def get_posts(start_date: str = None, end_date: str = None):
-    """Return posts for a given date range."""
+    """Return posts for a given date range, formatted for frontend."""
     try:
         from backend_database.data_api import TrumpDataClient
         client = TrumpDataClient(DEFAULT_DB_PATH)
         df = client.get_full_data(date_from=start_date, date_to=end_date)
         if df.empty:
             return []
+        
+        # Ensure datetime column exists and is string for JSON
+        if 'date' in df.columns:
+            df['datetime'] = pd.to_datetime(df['date'], errors='coerce')
+            df['datetime'] = df['datetime'].dt.strftime('%Y-%m-%d %H:%M:%S')
+        else:
+            df['datetime'] = None
+        
+        # Rename columns to match frontend expectations
+        df = df.rename(columns={
+            "replies_count":    "replies",
+            "reblogs_count":    "reblogs",
+            "favourites_count": "favourites",
+        })
+        
+        # Add missing columns with defaults if not present
+        if "sentiment" not in df.columns:
+            df["sentiment"] = "NEUTRAL"
+        if "sentiment_score" not in df.columns:
+            df["sentiment_score"] = 0.5
+        if "dominant_category" not in df.columns:
+            df["dominant_category"] = "Other"
+        if "has_media" not in df.columns:
+            df["has_media"] = False
+        if "is_president" not in df.columns:
+            df["is_president"] = True
+        if "post_type" not in df.columns:
+            df["post_type"] = "original"
+        
         # Convert to records
-        return df.to_dict(orient="records")
+        records = df.to_dict(orient="records")
+        return records
     except Exception as e:
         return {"error": str(e)}
 
