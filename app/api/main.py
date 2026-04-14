@@ -21,7 +21,9 @@ app = FastAPI()
 
 # Add monitoring router
 from app.api import monitoring
+from app.api import soy_trump_rhetoric
 app.include_router(monitoring.router)
+app.include_router(soy_trump_rhetoric.router)
 
 # ------------------------------------------------------------------------------
 # Background index initialization (does NOT block startup)
