@@ -1,12 +1,12 @@
 """
 backend/model_predict.py
 ========================
-Trump Truth Social → Market Impact 预测模块。
-依赖 model_training.py 训练并保存的模型文件。
+Trump Truth Social -> Next-Day Market Impact Predictor (Inference).
+Depends on model artifacts saved by model_training.py.
 
-用法：
-    python -m backend.model_predict           # 预测最新 7 天数据
-    from backend.model_predict import predict_latest, predict_new_posts
+Usage:
+    python -m backend.model_predict
+    from backend.model_predict import predict_latest, predict_for_date
 """
 
 import json
@@ -14,13 +14,14 @@ import warnings
 from pathlib import Path
 
 import joblib
+import numpy as np
 import pandas as pd
 
 from backend.model_training import (
     MODEL_DIR,
     CAT_COLS,
     GDELT_COLS,
-    engineer_features,
+    aggregate_daily,
     load_posts,
 )
 
@@ -28,27 +29,26 @@ warnings.filterwarnings("ignore")
 
 
 # ─────────────────────────────────────────────
-# 1.  PREDICT NEW POSTS (核心方法，供外部调用)
+# 1.  CORE INFERENCE
+#     Input  : raw post DataFrame (same schema as load_posts())
+#     Output : daily-level DataFrame with next-day impact probability
 # ─────────────────────────────────────────────
-def predict_new_posts(new_posts: pd.DataFrame) -> pd.DataFrame:
+def predict_from_posts(posts: pd.DataFrame) -> pd.DataFrame:
     """
-    把新帖子喂进已保存的模型，返回带 impact_proba 的 DataFrame。
+    Aggregate posts to daily level and predict next-day market impact.
 
-    参数：
-        new_posts : load_posts() 返回的原始 DataFrame，或列结构相同的 DataFrame
+    Args:
+        posts : raw post DataFrame with same schema as load_posts()
 
-    返回：
-        result : 原始列 + impact_proba，按概率降序排列
-
-    外部调用：
-        from backend.model_predict import predict_new_posts
-        from backend.model_training import load_posts
-        posts, cat_cols, gdelt_cols = load_posts()
-        result = predict_new_posts(posts.tail(100))
+    Returns:
+        daily DataFrame with columns:
+            date, post_count, next_day_impact_proba, high_impact_pred
+        sorted by date descending
     """
     if not (MODEL_DIR / "xgb_model.pkl").exists():
         raise FileNotFoundError(
-            f"模型文件不存在: {MODEL_DIR}\n请先运行 backend.model_training 完成训练。"
+            f"Model artifacts not found at: {MODEL_DIR}\n"
+            "Please run backend.model_training first."
         )
 
     clf    = joblib.load(MODEL_DIR / "xgb_model.pkl")
@@ -56,48 +56,53 @@ def predict_new_posts(new_posts: pd.DataFrame) -> pd.DataFrame:
     with open(MODEL_DIR / "feature_cols.json") as f:
         feature_cols = json.load(f)
 
-    print(f"      📦 Model loaded  |  Expected features: {len(feature_cols)}")
+    print(f"      Model loaded  |  Expected features: {len(feature_cols)}")
 
-    # 特征工程（和训练时完全一致）
-    cat_cols_infer   = [c for c in new_posts.columns if c in CAT_COLS]
-    gdelt_cols_infer = [c for c in new_posts.columns if c in GDELT_COLS]
-    df, _ = engineer_features(new_posts.copy(), cat_cols_infer, gdelt_cols_infer)
+    # Aggregate posts to daily level using the same logic as training
+    cat_cols_infer   = [c for c in posts.columns if c in CAT_COLS]
+    gdelt_cols_infer = [c for c in posts.columns if c in GDELT_COLS]
+    daily, _ = aggregate_daily(posts.copy(), cat_cols_infer, gdelt_cols_infer)
 
-    # 对齐特征列（缺失列补 0）
+    # Align feature columns (fill missing with 0)
     for c in feature_cols:
-        if c not in df.columns:
-            df[c] = 0.0
+        if c not in daily.columns:
+            daily[c] = 0.0
 
-    X    = df[feature_cols].fillna(0).astype(float).values
+    X    = daily[feature_cols].fillna(0).astype(float).values
     X_sc = scaler.transform(X)
 
-    df["impact_proba"] = clf.predict_proba(X_sc)[:, 1]
+    daily["next_day_impact_proba"] = clf.predict_proba(X_sc)[:, 1]
+    daily["high_impact_pred"]      = (daily["next_day_impact_proba"] >= 0.5).astype(int)
 
-    high_risk = (df["impact_proba"] >= 0.6).sum()
-    print(f"      🔍 Predicted {len(df):,} posts  |  "
-          f"High-risk (≥0.6): {high_risk:,}  |  "
-          f"Max proba: {df['impact_proba'].max():.3f}")
+    high_risk = daily["high_impact_pred"].sum()
+    print(f"      Predicted {len(daily):,} days  |  "
+          f"High-risk days (>=0.5): {high_risk:,}  |  "
+          f"Max proba: {daily['next_day_impact_proba'].max():.3f}")
 
-    keep = ["datetime", "content", "market_period", "during_market_hours", "impact_proba"]
-    keep = [c for c in keep if c in df.columns]
+    keep = ["date", "post_count", "next_day_ret", "high_impact",
+            "next_day_impact_proba", "high_impact_pred"]
+    keep = [c for c in keep if c in daily.columns]
 
-    return df[keep].sort_values("impact_proba", ascending=False).reset_index(drop=True)
+    return daily[keep].sort_values("date", ascending=False).reset_index(drop=True)
 
 
 # ─────────────────────────────────────────────
-# 2.  PREDICT LATEST (便捷方法，供外部/定时任务调用)
+# 2.  PREDICT LATEST N DAYS
+#     Convenient wrapper for scheduled jobs / API calls
 # ─────────────────────────────────────────────
-def predict_latest(days: int = 7, fallback_n: int = 50) -> pd.DataFrame:
+def predict_latest(days: int = 7) -> pd.DataFrame:
     """
-    加载最新数据并预测，无需重新训练。
+    Load the most recent posts and predict next-day impact for each day.
 
-    参数：
-        days       : 取最近多少天的帖子，默认 7 天
-        fallback_n : 最近 days 天无数据时，改取最新 N 条，默认 50
+    Args:
+        days : how many recent calendar days to include (default 7)
 
-    外部调用：
+    Returns:
+        daily prediction DataFrame sorted by date descending
+
+    Example:
         from backend.model_predict import predict_latest
-        result = predict_latest(days=3)
+        result = predict_latest(days=7)
     """
     raw, _, _ = load_posts()
 
@@ -105,30 +110,74 @@ def predict_latest(days: int = 7, fallback_n: int = 50) -> pd.DataFrame:
     recent = raw[raw["datetime"] >= cutoff].copy()
 
     if recent.empty:
-        print(f"      ⚠️  最近 {days} 天无数据，改用最新 {fallback_n} 条")
-        recent = raw.sort_values("datetime").tail(fallback_n).copy()
+        print(f"      No posts found in the last {days} days. Using latest 30 days.")
+        cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=30)
+        recent = raw[raw["datetime"] >= cutoff].copy()
+
+    if recent.empty:
+        raise ValueError("No posts available for prediction.")
 
     print(f"      Input: {len(recent):,} posts  "
-          f"({recent['datetime'].min().date()} → {recent['datetime'].max().date()})")
+          f"({recent['datetime'].min().date()} -> {recent['datetime'].max().date()})")
 
-    result = predict_new_posts(recent)
-
-    # 打印 top-10 预览
-    print(f"\n      {'datetime':<22} {'proba':>6}  {'market_period':<18}  content")
-    print(f"      {'-'*22} {'-'*6}  {'-'*18}  {'-'*50}")
-    for _, row in result.head(10).iterrows():
-        dt      = str(row["datetime"])[:19]
-        proba   = f"{row['impact_proba']:.3f}"
-        period  = str(row.get("market_period", ""))[:18]
-        content = str(row.get("content", ""))[:60].replace("\n", " ")
-        print(f"      {dt:<22} {proba:>6}  {period:<18}  {content}")
-
+    result = predict_from_posts(recent)
+    _print_prediction_table(result)
     return result
+
+
+# ─────────────────────────────────────────────
+# 3.  PREDICT FOR A SPECIFIC DATE
+#     Given a date, predict what next-day impact will be
+#     based on that day's posts.
+# ─────────────────────────────────────────────
+def predict_for_date(target_date: str) -> pd.DataFrame:
+    """
+    Predict next-day market impact based on posts from a specific date.
+
+    Args:
+        target_date : date string in 'YYYY-MM-DD' format
+
+    Returns:
+        single-row daily prediction DataFrame
+
+    Example:
+        from backend.model_predict import predict_for_date
+        result = predict_for_date("2025-03-15")
+    """
+    raw, _, _ = load_posts()
+
+    target = pd.Timestamp(target_date).normalize()
+    day_posts = raw[raw["date"].dt.normalize() == target].copy()
+
+    if day_posts.empty:
+        raise ValueError(f"No posts found for date: {target_date}")
+
+    print(f"      Input: {len(day_posts):,} posts on {target_date}")
+
+    result = predict_from_posts(day_posts)
+    _print_prediction_table(result)
+    return result
+
+
+# ─────────────────────────────────────────────
+# 4.  PRINT HELPER
+# ─────────────────────────────────────────────
+def _print_prediction_table(result: pd.DataFrame) -> None:
+    print(f"\n      {'date':<12} {'posts':>6}  {'proba':>6}  {'pred':>5}  {'actual':>6}")
+    print(f"      {'-'*12} {'-'*6}  {'-'*6}  {'-'*5}  {'-'*6}")
+    for _, row in result.head(10).iterrows():
+        date   = str(row["date"])[:10]
+        posts  = int(row["post_count"]) if "post_count" in row else "-"
+        proba  = f"{row['next_day_impact_proba']:.3f}"
+        pred   = "HIGH" if row["high_impact_pred"] else "low"
+        actual = str(int(row["high_impact"])) if "high_impact" in row and pd.notna(row["high_impact"]) else "?"
+        print(f"      {date:<12} {posts:>6}  {proba:>6}  {pred:>5}  {actual:>6}")
 
 
 # ─────────────────────────────────────────────
 if __name__ == "__main__":
     print("\n" + "=" * 55)
-    print("🧪  PREDICT TEST — latest 7 days")
+    print("PREDICT TEST -- latest 7 days")
     print("=" * 55)
-    print(predict_latest(days=7))
+    result = predict_latest(days=7)
+    print(result)
