@@ -60,9 +60,9 @@ def get_engine():
 # ------------------------------------------------------------------------------
 # Health Endpoint
 # ------------------------------------------------------------------------------
-@app.get("/")
-def health():
-    return {"status": "running", "database": DEFAULT_DB_PATH}
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
 
 # ------------------------------------------------------------------------------
 # Q&A Endpoint (Semantic Search)

@@ -21,7 +21,7 @@ uvicorn app.api.main:app --host 0.0.0.0 --port 8000 &
 echo "[start.sh] Waiting for API to be ready..."
 max_retries=30
 counter=0
-while ! curl -s http://localhost:8000/health > /dev/null 2>&1; do
+while ! curl -s -f http://localhost:8000/health > /dev/null 2>&1; do
     sleep 1
     counter=$((counter + 1))
     if [ $counter -ge $max_retries ]; then
