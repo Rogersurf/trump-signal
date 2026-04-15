@@ -25,11 +25,29 @@ class PostSearchEngine:
                 data = pickle.load(f)
                 self.posts = data.get("posts", [])
                 self.embeddings = data.get("embeddings", None)
-            print(f"[Embeddings] Loaded {len(self.posts)} posts from cache.")
+            print(f"[Embeddings] Loaded {len(self.posts)} posts from local cache.")
         else:
-            print("[Embeddings] No cache found. Run build_embeddings.py to generate it.")
-            self.posts = []
-            self.embeddings = None
+            # Try to download from Hugging Face Dataset
+            try:
+                from huggingface_hub import hf_hub_download
+                print("[Embeddings] Local cache not found. Downloading from Hugging Face...")
+                downloaded_path = hf_hub_download(
+                    repo_id="Rogersurf/trump-pulse-embeddings",
+                    filename="trump_embeddings.pkl",
+                    repo_type="dataset",
+                    local_dir=os.path.dirname(CACHE_PATH)
+                )
+                if downloaded_path != CACHE_PATH:
+                    os.rename(downloaded_path, CACHE_PATH)
+                with open(CACHE_PATH, "rb") as f:
+                    data = pickle.load(f)
+                self.posts = data.get("posts", [])
+                self.embeddings = data.get("embeddings", None)
+                print(f"[Embeddings] Downloaded and loaded {len(self.posts)} posts.")
+            except Exception as e:
+                print(f"[Embeddings] Could not download from HF: {e}")
+                self.posts = []
+                self.embeddings = None
 
     def build_index(self, force: bool = False):
         import sqlite3

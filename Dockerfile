@@ -2,33 +2,36 @@ FROM python:3.12
 
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends gcc g++ && \
+# Install system dependencies including nginx
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc g++ curl nginx && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Set environment variables for Hugging Face cache and our data
+# Environment variables
 ENV HF_HOME=/data/.huggingface
 ENV TRUMPPULSE_DATA_DIR=/data/trump_pulse
 ENV CHROMA_DB_PATH=/data/chroma_db
 
-# Create necessary directories
+# Create directories
 RUN mkdir -p $TRUMPPULSE_DATA_DIR $CHROMA_DB_PATH
 
+# Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy project
 COPY . .
-
-# avoid package searching
 RUN pip install -e .
 
-# Initialize SQLite database (lightweight, can be on persistent storage or ephemeral)
+# Initialize database
 RUN python backend_database/init_db.py --db-path $TRUMPPULSE_DATA_DIR/trump_data.db
 
+# Copy nginx config
+COPY nginx.conf /etc/nginx/nginx.conf
 
-# Build initial embeddings into ChromaDB (only if the collection is empty)
-RUN python backend_database/build_embeddings.py
+# Make start script executable
+RUN chmod +x start.sh
 
-EXPOSE 8000 7860
+EXPOSE 7860
 
-CMD ["sh", "-c", "python backend_database/backgroud_update.py & uvicorn app.api.main:app --host 0.0.0.0 --port 8000 & streamlit run frontend/streamlitapp.py --server.port 7860 --server.address 0.0.0.0"]
+CMD ["./start.sh"]

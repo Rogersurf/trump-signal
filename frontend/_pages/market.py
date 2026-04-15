@@ -1,49 +1,39 @@
 """pages/market.py — Market impact with period selector"""
 import streamlit as st
 import pandas as pd
+import requests
 from datetime import date, timedelta
-from frontend._data.api_client import get_stock_series, _client, _USE_REAL
+from frontend._data.api_client import get_stock_series
 from frontend._components.charts import stock_line_chart, category_impact_bar
-from frontend.config import INDEX_OPTIONS
+from frontend.config import API_URL, INDEX_OPTIONS
+
 
 def _get_available_dates():
-    """Get dataset max date from DB directly — always up to date"""
+    """Fetch min/max dates from the API."""
     try:
-        import sqlite3, os
-        db = os.environ.get("TRUMP_DB_PATH",
-             os.path.abspath(os.path.join(os.path.dirname(__file__),
-             "..", "..", "backend_database", "trump_data.db")))
-        conn = sqlite3.connect(db)
-        max_d = conn.execute("SELECT MAX(date) FROM truth_social").fetchone()[0]
-        conn.close()
-        return pd.to_datetime(max_d).date()
+        r = requests.get(f"{API_URL}/data/available_dates", timeout=5)
+        if r.status_code == 200:
+            data = r.json()
+            return pd.to_datetime(data["max_date"]).date()
     except Exception as e:
         print(f"_get_available_dates error: {e}")
-        return date.today()
+    return date.today()
 
-def _get_date_range(period: str, max_date: date):
-    if period == "This month":
-        return max_date.replace(day=1), max_date
-    elif period == "By month":
-        return None, None  # handled separately
-    elif period == "By year":
-        return None, None  # handled separately
-    else:  # All time
-        return date(2022, 1, 1), max_date
 
 def _get_category_impact(start: date, end: date) -> pd.DataFrame:
-    if _USE_REAL:
-        try:
-            df = _client.get_category_market_impact(
-                start=start.strftime("%Y-%m-%d"),
-                end=end.strftime("%Y-%m-%d")
-            )
-            if not df.empty and "sp500_5min_pct" in df.columns:
-                return df[["category", "sp500_5min_pct"]].rename(
-                    columns={"sp500_5min_pct": "avg_impact"}
-                ).sort_values("avg_impact")
-        except Exception as e:
-            print(f"category impact error: {e}")
+    """Fetch category impact from the API."""
+    try:
+        r = requests.get(
+            f"{API_URL}/categories/impact",
+            params={"start": start.strftime("%Y-%m-%d"), "end": end.strftime("%Y-%m-%d")},
+            timeout=10
+        )
+        if r.status_code == 200:
+            data = r.json()
+            if isinstance(data, list) and data:
+                return pd.DataFrame(data)
+    except Exception as e:
+        print(f"category impact error: {e}")
     return pd.DataFrame(columns=["category", "avg_impact"])
 
 
@@ -66,7 +56,7 @@ def render(T: dict):
             key="market_period",
         )
 
-    # ── Sub-selector ──────────────────────────────────────────────────────────
+    # ── Date range selection ──────────────────────────────────────────────────
     if period == "By month":
         months = []
         d = date(2022, 1, 1)
@@ -86,6 +76,7 @@ def render(T: dict):
         else:
             end = selected.replace(month=selected.month+1, day=1) - timedelta(days=1)
         end = min(end, max_date)
+        days = (end - start).days
 
     elif period == "By year":
         years = list(range(2022, max_date.year + 1))
@@ -94,11 +85,18 @@ def render(T: dict):
                                      format_func=str, key="market_year")
         start = date(selected_year, 1, 1)
         end   = min(date(selected_year, 12, 31), max_date)
+        days = (end - start).days
 
-    else:
-        start, end = _get_date_range(period, max_date)
+    elif period == "This month":
+        start = max_date.replace(day=1)
+        end = max_date
+        days = (end - start).days
 
-    days = (end - start).days
+    else:  # All time
+        start = date(2022, 1, 1)
+        end = max_date
+        days = (end - start).days
+
     st.caption(f"Showing: **{start.strftime('%d %b %Y')}** – **{end.strftime('%d %b %Y')}** · {days} days · Latest data: **{max_date.strftime('%d %b %Y')}**")
 
     # ── Stock chart ───────────────────────────────────────────────────────────

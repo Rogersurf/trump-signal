@@ -1,4 +1,4 @@
-"""pages/feed.py — Daily feed with real ML prediction"""
+"""pages/feed.py — Daily feed with real ML prediction (graceful fallback)"""
 import streamlit as st
 import pandas as pd
 from datetime import datetime, date, timedelta
@@ -47,18 +47,27 @@ def _next_trading_day(d: date) -> date:
         next_day += timedelta(days=1)
     return next_day
 
+def _is_xgboost_available() -> bool:
+    """Check if xgboost is installed and importable."""
+    try:
+        import importlib.util
+        return importlib.util.find_spec("xgboost") is not None
+    except:
+        return False
+
 def _get_ml_prediction(selected_date: date) -> dict:
     """
-    Get real ML prediction using predict_latest
-    Returns dict with impact, confidence, direction, next_day
+    Get real ML prediction using predict_latest.
+    Returns None if model is not available or fails.
     """
+    if not _is_xgboost_available():
+        return None
     try:
         from backend.model_predict import predict_latest
         # Use enough days to include selected_date in rolling window
         days_back = (date.today() - selected_date).days + 14
         result = predict_latest(days=max(days_back, 14))
         if not result.empty:
-            # Find prediction for selected_date
             result["date"] = result["date"].astype(str).str[:10]
             row = result[result["date"] == str(selected_date)]
             if not row.empty:
@@ -71,8 +80,8 @@ def _get_ml_prediction(selected_date: date) -> dict:
                     "next_day":   _next_trading_day(selected_date),
                     "is_mock":    False,
                 }
-    except Exception as e:
-        print(f"ML prediction error: {e}")
+    except Exception:
+        pass
     return None
 
 def _get_clock(tz_offset: int) -> str:
@@ -138,11 +147,8 @@ def render(T: dict, tz_offset: int):
             format_func=lambda x: STOCK_OPTIONS[x],
         )
 
-
-    # ── ML Prediction (daily level) ───────────────────────────────────────────
-    with st.spinner("Loading ML prediction..."):
-        pred = _get_ml_prediction(selected_date)
-
+    # ── ML Prediction (graceful fallback) ─────────────────────────────────────
+    pred = _get_ml_prediction(selected_date)
     next_td = _next_trading_day(selected_date)
 
     pred_box, _ = st.columns([3, 2])
@@ -163,7 +169,10 @@ def render(T: dict, tz_offset: int):
                 unsafe_allow_html=True,
             )
         else:
-            st.info(f"📊 No ML prediction available for {selected_date.strftime('%d %b %Y')} — no posts found or model not ready.")
+            st.info(
+                f"📊 ML prediction model is being trained. "
+                f"Showing real post data for {selected_date.strftime('%d %b %Y')}."
+            )
 
     # ── Posts ─────────────────────────────────────────────────────────────────
     posts = get_posts(str(selected_date), str(selected_date))
@@ -178,39 +187,51 @@ def render(T: dict, tz_offset: int):
     st.caption(f"{len(posts)} posts · UTC{tz_offset:+d} · tracking {STOCK_OPTIONS[stock_key]}")
 
     for _, row in posts.iterrows():
-        category  = row.get("dominant_category", "Other")
-        text      = str(row.get("text", ""))
+        # Safely extract values with defaults
+        text = str(row.get("text", "")) if pd.notna(row.get("text")) else ""
+        category = row.get("dominant_category", "Other")
+        if pd.isna(category) or not category:
+            category = "Other"
 
+        # Handle datetime safely
+        dt_val = row.get("datetime")
+        try:
+            dt_obj = pd.to_datetime(dt_val)
+            time_str = (dt_obj + timedelta(hours=tz_offset)).strftime("%d/%m/%Y %H:%M")
+        except:
+            time_str = str(row.get("date", ""))
+
+        # Engagement metrics with safe defaults
+        favs = int(row.get("favourites", 0) or 0)
+        reblogs = int(row.get("reblogs", 0) or 0)
+        replies = int(row.get("replies", 0) or 0)
+
+        # Stock impact
         if stock_key == "all":
-            # show all stocks
             stock_impacts = {}
             for sk, sl in ALL_STOCKS.items():
                 try:
-                    b = float(row.get(f"{sk}_5min_before", 0))
-                    a = float(row.get(f"{sk}_5min_after",  0))
+                    b = float(row.get(f"{sk}_5min_before", 0) or 0)
+                    a = float(row.get(f"{sk}_5min_after", 0) or 0)
                     if b != 0:
                         stock_impacts[sl] = round((a - b) / b * 100, 2)
                 except:
                     pass
-            impact_str   = "multiple"
+            impact_str = "multiple"
             impact_color = "#888"
         else:
             stock_impacts = {}
             try:
-                b      = float(row.get(f"{stock_key}_5min_before", row.get("sp500_5min_before", 0)))
-                a      = float(row.get(f"{stock_key}_5min_after",  row.get("sp500_5min_after",  0)))
+                b = float(row.get(f"{stock_key}_5min_before", row.get("sp500_5min_before", 0)) or 0)
+                a = float(row.get(f"{stock_key}_5min_after", row.get("sp500_5min_after", 0)) or 0)
                 impact = round((a - b) / b * 100, 2) if b != 0 else 0
-                impact_str   = f"+{impact:.2f}%" if impact >= 0 else f"{impact:.2f}%"
+                impact_str = f"+{impact:.2f}%" if impact >= 0 else f"{impact:.2f}%"
                 impact_color = "#1D9E75" if impact >= 0 else "#E24B4A"
             except:
-                impact_str = "N/A"; impact_color = "#888"
+                impact_str = "N/A"
+                impact_color = "#888"
 
-        try:
-            time_str  = (row["datetime"] + timedelta(hours=tz_offset)).strftime("%d/%m/%Y %H:%M")
-        except:
-            time_str  = str(row.get("date", ""))
-
-        topics  = _detect_topics(text)
+        topics = _detect_topics(text)
         effects = _get_effects(topics)
 
         with st.container(border=True):
@@ -221,11 +242,8 @@ def render(T: dict, tz_offset: int):
                 unsafe_allow_html=True,
             )
             st.markdown(f"> {text}" if text else "*[Media post — no text content]*")
-            st.caption(
-                f"❤️ {row.get('favourites',0):,}  "
-                f"🔁 {row.get('reblogs',0):,}  "
-                f"💬 {row.get('replies',0):,}"
-            )
+            st.caption(f"❤️ {favs:,}  🔁 {reblogs:,}  💬 {replies:,}")
+
             if stock_key == "all" and stock_impacts:
                 cols_s = st.columns(len(stock_impacts))
                 for idx_s, (sl, sv) in enumerate(stock_impacts.items()):
