@@ -7,7 +7,7 @@ def render(T: dict):
     st.caption("Search Trump's Truth Social posts by topic. Results ranked by relevance.")
 
     query = st.text_input(
-        "",
+        "Search",
         placeholder="Try: Iran, tariff, China, NATO, economy, bitcoin...",
         label_visibility="collapsed",
     )
