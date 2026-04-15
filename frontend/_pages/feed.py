@@ -56,27 +56,22 @@ def _is_xgboost_available() -> bool:
         return False
 
 def _get_ml_prediction(selected_date: date) -> dict:
-    """
-    Get real ML prediction using predict_latest.
-    Returns None if model is not available or fails.
-    """
-    if not _is_xgboost_available():
-        return None
+    """Get ML prediction via API endpoint."""
     try:
-        from backend.model_predict import predict_latest
-        # Use enough days to include selected_date in rolling window
-        days_back = (date.today() - selected_date).days + 14
-        result = predict_latest(days=max(days_back, 14))
-        if not result.empty:
-            result["date"] = result["date"].astype(str).str[:10]
-            row = result[result["date"] == str(selected_date)]
-            if not row.empty:
-                r = row.iloc[0]
-                proba = float(r["next_day_impact_proba"])
+        import requests
+        from frontend.config import API_URL
+        r = requests.get(
+            f"{API_URL}/model/predict/date/{selected_date}",
+            timeout=10
+        )
+        if r.status_code == 200:
+            data = r.json()
+            if "error" not in data:
+                proba = float(data["next_day_impact_proba"])
                 return {
-                    "impact":     "HIGH" if r["high_impact_pred"] == 1 else "LOW",
+                    "impact":     data["impact"],
                     "confidence": round(proba, 2),
-                    "direction":  "DOWN" if proba < 0.5 else "UP",
+                    "direction":  data["direction"],
                     "next_day":   _next_trading_day(selected_date),
                     "is_mock":    False,
                 }

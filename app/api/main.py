@@ -349,3 +349,24 @@ def debug_index():
         "collection_count": len(engine.posts) if engine.posts else 0,
         "db_path": engine.db_path,
     }
+
+@app.get("/model/predict/date/{target_date}")
+def predict_date(target_date: str):
+    """Predict next-day market impact for a specific date."""
+    try:
+        from backend.model_predict import predict_for_date
+        result = predict_for_date(target_date)
+        if result.empty:
+            raise ValueError("No prediction available")
+        import math
+        row = result.iloc[0]
+        proba = float(row["next_day_impact_proba"])
+        return {
+            "date": target_date,
+            "next_day_impact_proba": proba,
+            "high_impact_pred": int(row["high_impact_pred"]),
+            "impact": "HIGH" if row["high_impact_pred"] == 1 else "LOW",
+            "direction": "UP" if proba >= 0.5 else "DOWN",
+        }
+    except Exception as e:
+        return {"error": str(e)}
