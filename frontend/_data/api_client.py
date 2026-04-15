@@ -19,7 +19,7 @@ def is_api_alive() -> bool:
     max_retries = 20
     for _ in range(max_retries):
         try:
-            r = requests.get(f"{API_URL}/", timeout=2)
+            r = requests.get(f"{API_URL}/health", timeout=2)
             if r.status_code == 200:
                 return True
         except Exception:
