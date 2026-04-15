@@ -44,3 +44,4 @@ backend_database/chroma_db/
 tests/chroma_db/
 data/trump_pulse.db
 data/trump_pulse.db
+backend/model_artifacts/*.pkl
