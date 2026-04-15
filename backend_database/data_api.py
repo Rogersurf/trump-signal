@@ -18,9 +18,9 @@ class TrumpDataClient:
     def get_full_data(self, date_from=None, date_to=None, market_hours_only=False):
         conds = ["gdelt_total_events > 0"]
         if date_from:
-            conds.append(f"date >= '{date_from}'")
+            conds.append(f"DATE(date) >= '{date_from}'")
         if date_to:
-            conds.append(f"date <= '{date_to}'")
+            conds.append(f"DATE(date) <= '{date_to}'")
         if market_hours_only:
             conds.append("during_market_hours = 1")
         where = " AND ".join(conds)
@@ -32,9 +32,9 @@ class TrumpDataClient:
     def get_kpis(self, date_from=None, date_to=None):
         conds = ["1=1"]
         if date_from:
-            conds.append(f"date >= '{date_from}'")
+            conds.append(f"DATE(date) >= '{date_from}'")
         if date_to:
-            conds.append(f"date <= '{date_to}'")
+            conds.append(f"DATE(date) <= '{date_to}'")
         where = " AND ".join(conds)
         query = f"""
             SELECT
@@ -54,9 +54,9 @@ class TrumpDataClient:
     def get_daily_metrics(self, date_from=None, date_to=None):
         conds = ["1=1"]
         if date_from:
-            conds.append(f"date >= '{date_from}'")
+            conds.append(f"DATE(date) >= '{date_from}'")
         if date_to:
-            conds.append(f"date <= '{date_to}'")
+            conds.append(f"DATE(date) <= '{date_to}'")
         where = " AND ".join(conds)
         query = f"""
             SELECT
@@ -96,9 +96,9 @@ class TrumpDataClient:
     def get_category_distribution(self, date_from=None, date_to=None):
         conds = ["1=1"]
         if date_from:
-            conds.append(f"date >= '{date_from}'")
+            conds.append(f"DATE(date) >= '{date_from}'")
         if date_to:
-            conds.append(f"date <= '{date_to}'")
+            conds.append(f"DATE(date) <= '{date_to}'")
         where = " AND ".join(conds)
         query = f"""
             SELECT
@@ -118,9 +118,9 @@ class TrumpDataClient:
     def get_engagement_by_category(self, date_from=None, date_to=None):
         conds = ["1=1"]
         if date_from:
-            conds.append(f"date >= '{date_from}'")
+            conds.append(f"DATE(date) >= '{date_from}'")
         if date_to:
-            conds.append(f"date <= '{date_to}'")
+            conds.append(f"DATE(date) <= '{date_to}'")
         where = " AND ".join(conds)
         cats = {
             "self_promotion":       "cat_self_promotion",
@@ -167,9 +167,9 @@ class TrumpDataClient:
                       date_from=None, date_to=None):
         conds = ["1=1"]
         if date_from:
-            conds.append(f"date >= '{date_from}'")
+            conds.append(f"DATE(date) >= '{date_from}'")
         if date_to:
-            conds.append(f"date <= '{date_to}'")
+            conds.append(f"DATE(date) <= '{date_to}'")
         where = " AND ".join(conds)
         query = f"""
             SELECT
@@ -190,9 +190,9 @@ class TrumpDataClient:
     def get_gdelt_events(self, date_from=None, date_to=None):
         conds = ["1=1"]
         if date_from:
-            conds.append(f"date >= '{date_from}'")
+            conds.append(f"DATE(date) >= '{date_from}'")
         if date_to:
-            conds.append(f"date <= '{date_to}'")
+            conds.append(f"DATE(date) <= '{date_to}'")
         where = " AND ".join(conds)
         query = f"""
             SELECT
@@ -216,9 +216,9 @@ class TrumpDataClient:
     def get_daily_metrics_full(self, date_from=None, date_to=None):
         conds = ["1=1"]
         if date_from:
-            conds.append(f"date >= '{date_from}'")
+            conds.append(f"DATE(date) >= '{date_from}'")
         if date_to:
-            conds.append(f"date <= '{date_to}'")
+            conds.append(f"DATE(date) <= '{date_to}'")
         where = " AND ".join(conds)
         query = f"""
             SELECT strftime('%Y-%m-%d', date) AS day,
