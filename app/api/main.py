@@ -18,7 +18,7 @@ from backend_database.init_db import DEFAULT_DB_PATH
 # ------------------------------------------------------------------------------
 # Create FastAPI app FIRST (so Uvicorn can start immediately)
 # ------------------------------------------------------------------------------
-app = FastAPI(root_path="/api")
+app = FastAPI()
 
 # Add monitoring router
 from app.api import monitoring
