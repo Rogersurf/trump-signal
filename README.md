@@ -1,234 +1,229 @@
----
-title: TrumpPulse
-emoji: 📈
-colorFrom: blue
-colorTo: red
-sdk: docker
-pinned: false
----
+# TrumpPulse — MLOps Semester Project
 
-# trump-signal# 🚀 TrumpPulse — MLOps Semester Project
+MSc BDS — Data Engineering and Machine Learning Operations in Business  
+Aalborg University, 2026
 
-## 👥 Group Members
+## Group Members
 
-* Chenghao Luo
-* Suchanya Baiyam
-* Rogerio Braunschweiger de Freitas Lima
+Chenghao Luo  
+Suchanya Baiyam  
+Rogerio Braunschweiger de Freitas Lima
 
 ---
 
-## 📌 Project Overview
+## Project Overview
 
-**TrumpPulse** is an MLOps-focused system designed to ingest, process, and analyze textual data from Trump Truth Social Dataset.
+TrumpPulse is an end-to-end MLOps pipeline that ingests, processes, and analyzes Trump Truth Social posts. The system correlates post content with real-time financial market data and geopolitical signals, enabling users to explore how political rhetoric relates to market behavior.
 
-The primary goal is **not model performance**, but the design and implementation of a **robust, reproducible, and deployable MLOps pipeline**.
-
-The system performs:
-
-* 🧠 **Sentiment Classification** (positive / negative / neutral)
-* ❓ **Question Answering (QA)** over Trump’s posts
-
-This project aligns with Aalborg University’s MLOps requirements by emphasizing:
-
-* End-to-end pipeline
-* Deployment readiness
-* Reproducibility
-* Continuous or on-demand execution
+The primary focus is not model accuracy but the design of a robust, reproducible, and continuously operational MLOps system.
 
 ---
 
-## 🎯 Aim of the Project
+## Live Demo
 
-The objective is to build a **production-ready MLOps pipeline** that includes:
-
-* 📥 Data ingestion (initial + reusable)
-* 🧹 Preprocessing
-* 🧬 Feature representation (embeddings)
-* 🤖 Model inference (sentiment + QA)
-* 🌐 API-based deployment
-* 🐳 Containerization (Docker)
-* 🔁 Continuous or trigger-based execution
+https://huggingface.co/spaces/Ailee52/trump-signal
 
 ---
 
-## 🏗️ System Architecture
+## Pipeline Overview
 
 ```
-        ┌────────────────────┐
-        │ Hugging Face Dataset │
-        └─────────┬──────────┘
-                  ↓
-        ┌────────────────────┐
-        │ Data Ingestion     │
-        └─────────┬──────────┘
-                  ↓
-        ┌────────────────────┐
-        │ Preprocessing      │
-        └─────────┬──────────┘
-                  ↓
-        ┌────────────────────┐
-        │ Model Layer        │
-        │ - Sentiment        │
-        │ - QA (Embeddings)  │
-        └─────────┬──────────┘
-                  ↓
-        ┌────────────────────┐
-        │ FastAPI Service    │
-        └─────────┬──────────┘
-                  ↓
-        ┌────────────────────┐
-        │ Docker Container   │
-        └────────────────────┘
+HuggingFace Dataset (32,429 posts)
+        |
+        v
+Data Ingestion (init_db.py)
+SQLite database with index on date and post_id
+        |
+        v
+Daily Sync (backgroud_update.py)
+APScheduler runs at 00:00 UTC, re-fetches dataset, rebuilds embeddings
+        |
+        v
+Feature Layer (data_api.py)
+TrumpDataClient: KPIs, stock series, GDELT trends, category distributions
+        |
+        v
+Model Layer
+  Sentiment: pre-labeled in dataset (cardiffnlp/twitter-roberta-base-sentiment)
+  Semantic Search: all-MiniLM-L6-v2 embeddings, cosine similarity, pickle cache
+  Market Predictor: XGBoost classifier, next-day market impact, TimeSeriesSplit CV
+        |
+        v
+FastAPI (app/api/main.py)
+Endpoints: /health /qa /posts /stocks /categories /gdelt /pipeline/status /metrics /feedback
+        |
+        v
+Streamlit Frontend (frontend/streamlitapp.py)
+Pages: Feed, Topics, Market, Geopolitical, Q&A, Developer Dashboard
+        |
+        v
+Nginx Reverse Proxy (nginx.conf)
+Single port 7860: /api/* to FastAPI (8000), /* to Streamlit (8501)
+        |
+        v
+Docker Container
 ```
 
 ---
 
-## ⚙️ Pipeline Components
+## How to Run Locally
 
-### 📥 Data Ingestion
+**Requirements:** Docker installed on your machine.
 
-* Data is loaded from Hugging Face
-* Stored locally for reproducibility
-
-### 🧹 Preprocessing
-
-* Text cleaning
-* Null filtering
-* Basic normalization
-
-### 🤖 Model Layer
-
-#### Sentiment Analysis
-
-* Pretrained transformer model
-* Outputs:
-
-  * Label (POSITIVE / NEGATIVE)
-  * Confidence score
-
-#### Question Answering (QA)
-
-* Sentence embeddings using `SentenceTransformers`
-* Semantic similarity search
-* Returns most relevant Trump posts
-
----
-
-## 🌐 API Deployment
-
-The system is deployed using:
-👉 FastAPI
-
-### Available Endpoints
-
-| Endpoint             | Description               |
-| -------------------- | ------------------------- |
-| `/`                  | Health check              |
-| `/predict_sentiment` | Classify sentiment        |
-| `/ask_question`      | Retrieve relevant answers |
-
----
-
-## 🐳 Containerization
-
-The entire system is containerized using Docker:
-
-* Ensures reproducibility
-* Enables easy deployment
-* Supports continuous operation
-
----
-
-## 🔁 Execution Strategy
-
-The system supports:
-
-* ✅ API-based interaction (on-demand)
-* ✅ Continuous execution via server runtime
-* 🔜 Future: scheduled jobs (cron / GitHub Actions)
-
----
-
-## 📦 Artifact Management
-
-The project stores:
-
-* 📁 Raw data
-* 📁 Processed data
-* 📁 Model outputs (predictions)
-
-This supports:
-
-* Reproducibility
-* Debugging
-* Evaluation
-
----
-
-## 📊 Evaluation & Monitoring (Basic)
-
-* Logging of predictions
-* API health monitoring
-* Model output inspection
-
-Future improvements may include:
-
-* Model versioning
-* Drift detection
-* Performance tracking
-
----
-
-## 🧪 How to Run the Project
-
-### ▶️ Local Run
+Clone the repository:
 
 ```bash
-pip install -r requirements.txt
-uvicorn app.main:app --reload
+git clone https://github.com/Rogersurf/trump-signal
+cd trump-signal
 ```
 
-Access:
-👉 http://localhost:8000/docs
-
----
-
-### 🐳 Docker Run
+Build and run:
 
 ```bash
 docker build -t trump-pulse .
-docker run -p 8000:8000 trump-pulse
+docker run -p 7860:7860 trump-pulse
+```
+
+Open in browser: http://localhost:7860
+
+Note: The first build downloads the full dataset from HuggingFace (~32k posts) and builds the embeddings cache. This takes approximately 10 to 20 minutes.
+
+---
+
+## How to Run Without Docker
+
+Install dependencies:
+
+```bash
+pip install -e .
+pip install -r requirements.txt
+```
+
+Initialize the database:
+
+```bash
+python backend_database/init_db.py
+```
+
+Start FastAPI and Streamlit in two separate terminals:
+
+```bash
+uvicorn app.api.main:app --host 0.0.0.0 --port 8000
+streamlit run frontend/streamlitapp.py --server.port 8501
+```
+
+Open in browser: http://localhost:8501
+
+---
+
+## How to Reproduce Results
+
+The dataset is versioned with DVC. The pointer file is at data/trump_pulse.db.dvc.
+
+To pull the exact dataset version used in this project:
+
+```bash
+dvc pull
+```
+
+The XGBoost model artifacts are stored in backend/model_artifacts/ and include the trained model, scaler, feature list, and evaluation metrics. To retrain from scratch:
+
+```bash
+python -m backend.model_training
+```
+
+Model performance on held-out test set (Dec 2025 to Mar 2026):
+
+```
+ROC-AUC (test):     0.639
+ROC-AUC (CV mean):  0.607
+CV std:             0.038
+Test samples:       418 days
 ```
 
 ---
 
-## 🚀 Future Work
+## Repository Structure
 
-* 📊 Market reaction modeling
-* 📈 Time-series analysis
-* 🧠 Advanced NLP models
-* 🌍 Frontend dashboard (Streamlit)
-* 🔄 Automated data pipelines
+```
+trump-signal/
+    app/api/
+        main.py               FastAPI application and all endpoints
+        monitoring.py         Prometheus metrics endpoint
+        soy_trump_rhetoric.py Rhetoric analysis router
+    backend/
+        model_training.py     XGBoost training pipeline with TimeSeriesSplit
+        model_predict.py      Inference functions for latest and specific dates
+        model_dashboard.py    Plotly Dash model visualization dashboard
+        model_artifacts/      Saved model, scaler, feature list, metrics
+    backend_database/
+        init_db.py            First-time dataset download and SQLite creation
+        daily_update.py       Scheduled daily sync (APScheduler)
+        backgroud_update.py   Production background sync process
+        embeddings.py         Sentence-transformer embedding cache and search
+        build_embeddings.py   Rebuilds and uploads embeddings to HuggingFace
+        incremental_embeddings.py  Updates only new posts in embedding cache
+        data_api.py           TrumpDataClient: all SQL query functions
+    frontend/
+        streamlitapp.py       Entry point, routing, sidebar
+        _pages/               feed, market, topics, geopolitical, qa, dev
+        _data/api_client.py   HTTP client for all FastAPI calls
+        _components/          Reusable post_card and charts components
+        config.py             API URL, colors, stock options
+    tests/                    Unit tests for all pipeline components
+    .github/workflows/        Weekly CI/CD data update (Monday 03:00 UTC)
+    .dvc/                     DVC configuration for data versioning
+    Dockerfile                Single container build with Nginx + FastAPI + Streamlit
+    nginx.conf                Reverse proxy routing on port 7860
+    start.sh                  Startup script launching all three services
+    requirements.txt          Python dependencies
+    VERSION                   Current version (1.0.0)
+    CHANGELOG.md              Version history
+```
 
 ---
 
-## ✅ Key Takeaways
+## Artifact Management
 
-* Focus on **MLOps, not model perfection**
-* Demonstrates **end-to-end pipeline**
-* Fully **containerized and deployable**
-* Supports **real-time interaction via API**
+Each pipeline run produces the following artifacts:
 
----
-
-## 📎 Repository
-
-👉 (https://github.com/Rogersurf/trump-signal)
+Raw data: SQLite database downloaded from HuggingFace, versioned with DVC  
+Embeddings: Precomputed pickle cache stored locally and on HuggingFace dataset repo (Rogersurf/trump-pulse-embeddings)  
+Model artifacts: xgb_model.pkl, scaler.pkl, feature_cols.json, metrics.json stored in backend/model_artifacts/  
+Feedback: User ratings on Q&A results stored in the SQLite feedback table  
 
 ---
 
-## 💡 Final Note
+## Monitoring and Versioning
 
-This project is designed to demonstrate a **working, scalable, and reproducible MLOps system**, aligned with academic requirements and real-world deployment practices.
+The /metrics endpoint exposes Prometheus-formatted metrics including request counts per endpoint and database file size.
+
+The /pipeline/status endpoint returns the current state of each pipeline stage including model name, embedding model, dataset version, and last update times.
+
+Model versioning is handled by saving artifacts with fixed filenames in backend/model_artifacts/. Dataset versioning is handled by DVC with a pointer file tracking the SQLite database.
 
 ---
+
+## Deployment
+
+The system is deployed on HuggingFace Spaces using Docker (sdk: docker in README frontmatter). Nginx listens on port 7860 and routes traffic to FastAPI on port 8000 and Streamlit on port 8501 within the same container.
+
+GitHub Actions runs a weekly pipeline update every Monday at 03:00 UTC, re-fetching the dataset and syncing the database. The workflow can also be triggered manually via workflow_dispatch.
+
+---
+
+## API Endpoints
+
+| Endpoint | Method | Description |
+|---|---|---|
+| /health | GET | Health check |
+| /qa | GET | Semantic search over posts |
+| /feedback | POST | Submit rating on Q&A result |
+| /posts | GET | Fetch posts by date range |
+| /stocks | GET | Stock series data |
+| /categories | GET | Category distribution |
+| /categories/impact | GET | Market impact per category |
+| /gdelt/range | GET | GDELT geopolitical trend data |
+| /gdelt/summary | GET | GDELT summary metrics |
+| /pipeline/status | GET | Pipeline health and metadata |
+| /metrics | GET | Prometheus-formatted metrics |

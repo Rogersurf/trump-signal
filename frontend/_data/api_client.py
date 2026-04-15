@@ -20,7 +20,7 @@ def is_api_alive() -> bool:
     for _ in range(max_retries):
         try:
             r = requests.get(f"{API_URL}/", timeout=2)
-            if r.status_code == 200 and r.json().get("status") == "running":
+            if r.status_code == 200:
                 return True
         except Exception:
             pass
