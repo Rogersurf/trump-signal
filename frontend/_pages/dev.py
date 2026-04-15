@@ -2,6 +2,7 @@
 import streamlit as st
 import plotly.express as px
 from frontend._data.api_client import get_pipeline_status, get_artifact_log, get_posts
+from datetime import date
 
 def render(T: dict):
     st.title("🛠️ Developer dashboard")
