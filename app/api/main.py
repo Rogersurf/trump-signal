@@ -10,6 +10,7 @@ import os
 import threading
 import time
 import pandas as pd
+import numpy as np
 
 # Add project root to Python path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
