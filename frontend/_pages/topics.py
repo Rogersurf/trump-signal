@@ -7,7 +7,7 @@ from frontend._data.api_client import get_category_summary
 from frontend.config import CATEGORY_COLORS
 
 def render(T: dict):
-    today = date(2026, 4, 14)  # dataset max date
+    today = date.today()
 
     st.caption("Topic classification is based on the dataset — no model training required.")
 

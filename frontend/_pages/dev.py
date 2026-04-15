@@ -75,7 +75,7 @@ def render(T: dict):
         use_container_width=True, hide_index=True,
     )
 
-    today_log = log_df[log_df["timestamp"].str.startswith("2026-04-06")]
+    today_log = log_df[log_df["timestamp"].str.startswith(str(date.today()))]
     if not today_log.empty:
         fig = px.bar(today_log, x="stage", y="duration_s",
                      color="status",
