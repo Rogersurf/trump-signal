@@ -64,9 +64,12 @@ def render(T: dict):
     st.caption(f"Source: `{status.get('artifact_path', 'N/A')}`")
 
     log_df = get_artifact_log()
-    log_df["status_icon"] = log_df["status"].map(
-        {"ok": "✅", "error": "❌", "warning": "⚠️"}
-    )
+    if "status" in log_df.columns:
+        log_df["status_icon"] = log_df["status"].map(
+            {"ok": "✅", "error": "❌", "warning": "⚠️"}
+        )
+    else:
+        log_df["status_icon"] = "⚠️"
     st.dataframe(
         log_df[["timestamp","stage","rows","duration_s","status_icon"]].rename(
             columns={"timestamp":"Time","stage":"Stage",
