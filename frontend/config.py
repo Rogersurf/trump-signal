@@ -7,7 +7,7 @@ REPLACE: API_URL เมื่อ deploy ขึ้น cloud
 
 # REPLACE: เปลี่ยนเป็น URL จริงตอน deploy เช่น https://trumpsignal.app/api
 import os
-API_URL = os.environ.get("API_URL", "/api")
+API_URL = os.environ.get("API_URL", "http://localhost:8000")
 
 TIMEZONES = {
     "UTC":               0,
