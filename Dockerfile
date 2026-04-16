@@ -2,35 +2,40 @@ FROM python:3.12
 
 WORKDIR /app
 
+# Install system dependencies including nginx
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc g++ curl nginx && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# Environment variables
 ENV HF_HOME=/data/.huggingface
 ENV TRUMPPULSE_DATA_DIR=/data/trump_pulse
 ENV CHROMA_DB_PATH=/data/chroma_db
 
+# Create directories
 RUN mkdir -p $TRUMPPULSE_DATA_DIR $CHROMA_DB_PATH
 
+# Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy project
 COPY . .
 RUN pip install -e .
 
-# 🔥 Create DB
-RUN python backend_database/init_db.py
+# Initialize database
+RUN python backend_database/init_db.py --db-path $TRUMPPULSE_DATA_DIR/trump_data.db
 
-# 🔥 Populate DB (CRITICAL FIX)
-RUN python backend_database/daily_update.py --once
-
-# (optional) remove if slow
-# RUN python -m backend.model_training
-
+# train the model
+RUN python backend/model_training.py --data-dir $TRUMPPULSE_DATA_DIR --db-path $TRUMPPULSE_DATA_DIR/trump_data.db --chroma-db-path $CHROMA_DB_PATH
+# Copy nginx config
 COPY nginx.conf /etc/nginx/nginx.conf
+
+# Make start script executable
 RUN chmod +x start.sh
 
-EXPOSE 8000
-EXPOSE 8501
+EXPOSE 7860
 
 CMD ["bash", "start.sh"]
+
+RUN ls -l

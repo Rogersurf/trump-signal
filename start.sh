@@ -22,5 +22,8 @@ until curl -s http://localhost:8000/health > /dev/null; do
   sleep 2
 done
 
+echo "[start.sh] Testing nginx config..."
+nginx -t
+
 echo "[start.sh] Starting nginx..."
-exec nginx -g "daemon off;"
+nginx -g "daemon off;"
