@@ -26,6 +26,8 @@ RUN pip install -e .
 # Initialize database
 RUN python backend_database/init_db.py --db-path $TRUMPPULSE_DATA_DIR/trump_data.db
 
+# train the model
+RUN python backend/model_training.py --data-dir $TRUMPPULSE_DATA_DIR --db-path $TRUMPPULSE_DATA_DIR/trump_data.db --chroma-db-path $CHROMA_DB_PATH
 # Copy nginx config
 COPY nginx.conf /etc/nginx/nginx.conf
 
