@@ -17,5 +17,4 @@ apscheduler
 httpx
 websockets
 xgboost
-seaborn
 matplotlib
