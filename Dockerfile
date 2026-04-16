@@ -26,6 +26,9 @@ RUN pip install -e .
 # Initialize database
 RUN python backend_database/init_db.py --db-path $TRUMPPULSE_DATA_DIR/trump_data.db
 
+# Train ML model
+RUN python -m backend.model_training
+
 # Copy nginx config
 COPY nginx.conf /etc/nginx/nginx.conf
 
