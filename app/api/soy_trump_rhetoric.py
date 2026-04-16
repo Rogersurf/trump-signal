@@ -6,7 +6,7 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 from fastapi import APIRouter
-from backend_database.data_api import TrumpDataClient
+from backend_database.data_api import *
 from backend.model_predict import predict_from_posts, predict_latest, predict_for_date
 from backend.model_training import load_posts, MODEL_DIR
 
@@ -15,7 +15,7 @@ router = APIRouter(
     tags=["Rhetoric"]      # categorize endpoints in docs
 )
 
-db_client = TrumpDataClient("trump_data.db")
+db_client = TrumpDataClient(DB_PATH)
 
 
 # ─────────────────────────────────────────────
@@ -266,4 +266,13 @@ def _df_to_json(df: pd.DataFrame) -> list:
 # ─────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn
-    uvicorn
+    app = FastAPI(title="Trump Rhetoric Analysis API")
+
+    # 将刚才定义的 router 注册到 app 中
+    app.include_router(router)
+
+
+    # 根路径测试
+
+
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
