@@ -165,8 +165,8 @@ def aggregate_daily(
     df: pd.DataFrame,
     cat_cols: list,
     gdelt_cols: list,
+    predict_mode: bool = False,
 ) -> tuple[pd.DataFrame, list]:
-
     df = df.sort_values("datetime").reset_index(drop=True)
     df = build_post_features(df)
 
@@ -220,37 +220,38 @@ def aggregate_daily(
           .reset_index(drop=True)
     )
 
-    # Compute next-day return label (shift -1 on daily index)
-    p_close = f"{PRIMARY_TICKER}_close_daily"
-    p_open  = f"{PRIMARY_TICKER}_open_daily"
+    # ── Label 生成：仅训练时执行 ──────────────────────────
+    if not predict_mode:
+        p_close = f"{PRIMARY_TICKER}_close_daily"
+        p_open  = f"{PRIMARY_TICKER}_open_daily"
 
-    if p_close in daily.columns:
-        daily["next_day_ret"] = (
-            daily[p_close].shift(-1) - daily[p_close]
-        ) / daily[p_close]
-    elif p_open in daily.columns:
-        daily["next_day_ret"] = (
-            daily[p_open].shift(-1) - daily[p_open]
-        ) / daily[p_open]
-    else:
-        daily["next_day_ret"] = np.nan
+        if p_close in daily.columns:
+            daily["next_day_ret"] = (
+                daily[p_close].shift(-1) - daily[p_close]
+            ) / daily[p_close]
+        elif p_open in daily.columns:
+            daily["next_day_ret"] = (
+                daily[p_open].shift(-1) - daily[p_open]
+            ) / daily[p_open]
+        else:
+            daily["next_day_ret"] = np.nan
+
+        # Drop last row (no next-day label)
+        daily = daily[daily["next_day_ret"].notna()].copy()
+
+        # High-impact label: top 25% absolute return (75th percentile)
+        thresh = daily["next_day_ret"].abs().quantile(IMPACT_QUANTILE)
+        daily["high_impact"] = (daily["next_day_ret"].abs() >= thresh).astype(int)
+
+        n_high = daily["high_impact"].sum()
+        print(f"      Daily rows      : {len(daily):,}")
+        print(f"      High-impact days: {n_high:,}  ({n_high/len(daily)*100:.1f}%)")
+        print(f"      Threshold ({IMPACT_QUANTILE*100:.0f}th pct): {thresh * 100:.3f}%")
 
     # Drop raw price cols — leakage if used as features
     daily = daily.drop(columns=list(price_agg.keys()), errors="ignore")
 
-    # Drop last row (no next-day label)
-    daily = daily[daily["next_day_ret"].notna()].copy()
-
-    # High-impact label: top 25% absolute return (75th percentile)
-    thresh = daily["next_day_ret"].abs().quantile(IMPACT_QUANTILE)
-    daily["high_impact"] = (daily["next_day_ret"].abs() >= thresh).astype(int)
-
-    n_high = daily["high_impact"].sum()
-    print(f"      Daily rows      : {len(daily):,}")
-    print(f"      High-impact days: {n_high:,}  ({n_high/len(daily)*100:.1f}%)")
-    print(f"      Threshold ({IMPACT_QUANTILE*100:.0f}th pct): {thresh * 100:.3f}%")
-
-    # Rolling cat_* context (shift 1 to avoid same-day leakage)
+    # ── 特征工程：训练和预测都执行 ────────────────────────
     cat_sum_cols  = [f"{c.replace('cat_', '')}_sum"  for c in existing_cat]
     cat_mean_cols = [f"{c.replace('cat_', '')}_mean" for c in existing_cat]
     all_cat_daily = [c for c in cat_sum_cols + cat_mean_cols if c in daily.columns]

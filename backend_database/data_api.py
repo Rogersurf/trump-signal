@@ -5,8 +5,17 @@ import sqlite3
 import pandas as pd
 import datetime
 import os
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "trump_data.db")
+base_data_dir = os.getenv("TRUMPPULSE_DATA_DIR")
+
+# align with Roger's env params
+if base_data_dir:
+
+    DB_PATH = os.path.join(base_data_dir, "trump_data.db")
+else:
+
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    DB_PATH = os.path.join(BASE_DIR, "trump_data.db")
+
 class TrumpDataClient:
     def __init__(self, db_path=DB_PATH):
         self.db_path = db_path

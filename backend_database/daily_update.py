@@ -69,7 +69,7 @@ if __name__ == "__main__":
         sync_task()
         print("One‑off sync completed. Exiting.")
         sys.exit(0)
-
+    sync_task()
     # Scheduler mode (runs daily at 02:00)
     scheduler = BackgroundScheduler()
     scheduler.add_job(sync_task, 'cron', hour=2, minute=0)

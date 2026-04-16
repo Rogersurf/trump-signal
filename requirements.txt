@@ -16,3 +16,4 @@ httpx
 apscheduler
 httpx
 websockets
+xgboost
