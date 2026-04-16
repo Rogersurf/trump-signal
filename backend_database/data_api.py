@@ -6,7 +6,11 @@ import pandas as pd
 import datetime
 import os
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "trump_data.db")
+_DATA_DIR = os.environ.get("TRUMPPULSE_DATA_DIR")
+if _DATA_DIR:
+    DB_PATH = os.path.join(_DATA_DIR, "trump_data.db")
+else:
+    DB_PATH = os.path.join(BASE_DIR, "trump_data.db")
 class TrumpDataClient:
     def __init__(self, db_path=DB_PATH):
         self.db_path = db_path
