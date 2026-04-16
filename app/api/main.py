@@ -1,47 +1,46 @@
-"""FastAPI application for TrumpPulse."""
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse
-import math
+"""FastAPI application for TrumpPulse (FULL version, production-ready)."""
+
+from fastapi import FastAPI, HTTPException, APIRouter
 from pydantic import BaseModel
 import sqlite3
 from datetime import datetime, timezone
-import sys
-import os
 import threading
 import time
+import os
+import sys
 import pandas as pd
 import numpy as np
-from fastapi import HTTPException
 
-# Add project root to Python path
+# ------------------------------------------------------------------------------
+# Fix Python path (Docker / HF Spaces)
+# ------------------------------------------------------------------------------
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
+# ------------------------------------------------------------------------------
+# Imports
+# ------------------------------------------------------------------------------
 from backend_database.embeddings import get_search_engine
 from backend_database.init_db import DEFAULT_DB_PATH
 from app.api.soy_trump_rhetoric import router as rhetoric_router
-
-
+from app.api import monitoring
 
 # ------------------------------------------------------------------------------
-# Create FastAPI app FIRST (so Uvicorn can start immediately)
+# App + Router
 # ------------------------------------------------------------------------------
 app = FastAPI()
-app.include_router(rhetoric_router)
+api_router = APIRouter(prefix="/api")
 
-@app.get("/")
-def root():
-    return {"status": "ok"}
-
-# Add monitoring router
-from app.api import monitoring
-app.include_router(monitoring.router)
+# External routers
+app.include_router(rhetoric_router, prefix="/api")
+app.include_router(monitoring.router, prefix="/api")
 
 # ------------------------------------------------------------------------------
-# Background index initialization (does NOT block startup)
+# Background Engine (NO rebuild allowed)
 # ------------------------------------------------------------------------------
 _engine = None
 _index_ready = False
 _index_building = False
+
 
 def _initialize_engine():
     global _engine, _index_ready, _index_building
@@ -50,81 +49,96 @@ def _initialize_engine():
 
     try:
         time.sleep(2)
-
         print(f"[STARTUP] Loading search engine from {DEFAULT_DB_PATH}")
 
-        # Load engine (this loads cache or downloads from HF)
         _engine = get_search_engine(DEFAULT_DB_PATH)
 
-        # ❗ IMPORTANT: NEVER build embeddings here
         if _engine.embeddings is None:
-            print("[STARTUP] WARNING: Embeddings not available.")
+            print("[STARTUP] WARNING: embeddings NOT loaded")
         else:
-            print(f"[STARTUP] Engine ready with {len(_engine.posts)} posts.")
+            print(f"[STARTUP] Engine ready with {len(_engine.posts)} posts")
 
         _index_ready = True
 
     except Exception as e:
-        print(f"[STARTUP] ERROR initializing search engine: {e}")
+        print(f"[STARTUP] ERROR: {e}")
         _index_ready = False
 
     finally:
         _index_building = False
 
 
-# Run in background (non-blocking startup)
 threading.Thread(target=_initialize_engine, daemon=True).start()
 
+
 def get_engine():
-    global _engine, _index_ready, _index_building
     if _index_building or not _index_ready:
         return None
     return _engine
 
-# ------------------------------------------------------------------------------
-# Health Endpoint
-# ------------------------------------------------------------------------------
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
 
 # ------------------------------------------------------------------------------
-# Q&A Endpoint (Semantic Search)
+# HEALTH
 # ------------------------------------------------------------------------------
-@app.get("/qa")
+@api_router.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+# ------------------------------------------------------------------------------
+# QA (Semantic Search)
+# ------------------------------------------------------------------------------
+@api_router.get("/qa")
 def qa(query: str, limit: int = 5):
     engine = get_engine()
+
     if engine is None:
-        return {"error": "Search engine is still initializing. Please try again in a minute."}
+        return {"error": "Search engine initializing"}
+
     try:
         results = engine.search(query, top_k=limit)
-        # Enrich results with stock data and URL from DB
-        enriched = []
+
         conn = sqlite3.connect(DEFAULT_DB_PATH)
+        enriched = []
+
         for r in results:
             post_id = r["post"].get("post_id", "")
+
             try:
                 row = pd.read_sql(
-                    "SELECT url, sp500_5min_before, sp500_5min_after, "
-                    "qqq_5min_before, qqq_5min_after, "
-                    "djt_5min_before, djt_5min_after, "
-                    "during_market_hours "
-                    "FROM truth_social WHERE post_id = ? LIMIT 1",
-                    conn, params=[str(post_id)]
+                    """
+                    SELECT url,
+                           sp500_5min_before, sp500_5min_after,
+                           qqq_5min_before, qqq_5min_after,
+                           djt_5min_before, djt_5min_after,
+                           during_market_hours
+                    FROM truth_social
+                    WHERE post_id = ?
+                    LIMIT 1
+                    """,
+                    conn,
+                    params=[str(post_id)],
                 )
+
                 if not row.empty:
                     extra = row.iloc[0].where(pd.notnull(row.iloc[0]), None).to_dict()
                     r["post"].update(extra)
+
             except:
                 pass
+
             enriched.append(r)
+
         conn.close()
+
         return {"query": query, "results": enriched}
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 # ------------------------------------------------------------------------------
-# Feedback Endpoint
+# FEEDBACK
 # ------------------------------------------------------------------------------
 class FeedbackRequest(BaseModel):
     query: str
@@ -132,10 +146,12 @@ class FeedbackRequest(BaseModel):
     rating: int
     comment: str = ""
 
-@app.post("/feedback")
+
+@api_router.post("/feedback")
 def submit_feedback(feedback: FeedbackRequest):
     conn = sqlite3.connect(DEFAULT_DB_PATH)
     cursor = conn.cursor()
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS feedback (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -146,275 +162,167 @@ def submit_feedback(feedback: FeedbackRequest):
             comment TEXT
         )
     """)
+
     cursor.execute(
         "INSERT INTO feedback (timestamp, query, response, rating, comment) VALUES (?, ?, ?, ?, ?)",
-        (datetime.now(timezone.utc).isoformat(), feedback.query, feedback.response, feedback.rating, feedback.comment)
+        (
+            datetime.now(timezone.utc).isoformat(),
+            feedback.query,
+            feedback.response,
+            feedback.rating,
+            feedback.comment,
+        ),
     )
+
     conn.commit()
     conn.close()
+
     return {"status": "feedback recorded"}
 
+
 # ------------------------------------------------------------------------------
-# Market Impact & Data Endpoints (for frontend pages)
+# POSTS
 # ------------------------------------------------------------------------------
-@app.get("/stocks")
-def get_stocks(index: str = "sp500", days: int = 30):
-    """Return stock series data for the given index."""
+@api_router.get("/posts")
+def get_posts(start_date: str = None, end_date: str = None):
     try:
         from backend_database.data_api import TrumpDataClient
+
+        client = TrumpDataClient(DEFAULT_DB_PATH)
+        df = client.get_full_data(date_from=start_date, date_to=end_date)
+
+        if df.empty:
+            return []
+
+        df = df.replace({np.nan: None})
+
+        return df.to_dict(orient="records")
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ------------------------------------------------------------------------------
+# STOCKS
+# ------------------------------------------------------------------------------
+@api_router.get("/stocks")
+def get_stocks(index: str = "sp500", days: int = 30):
+    try:
+        from backend_database.data_api import TrumpDataClient
+
         client = TrumpDataClient(DEFAULT_DB_PATH)
         df = client.get_stock_series(index, days)
+
         return df.to_dict(orient="records")
+
     except Exception as e:
         return {"error": str(e)}
 
-@app.get("/categories/impact")
+
+# ------------------------------------------------------------------------------
+# CATEGORIES
+# ------------------------------------------------------------------------------
+@api_router.get("/categories")
+def get_categories(date_from: str = None, date_to: str = None):
+    try:
+        from backend_database.data_api import TrumpDataClient
+
+        client = TrumpDataClient(DEFAULT_DB_PATH)
+        df = client.get_category_distribution(date_from, date_to)
+
+        if isinstance(df, pd.Series):
+            df = pd.DataFrame({"category": df.index, "count": df.values})
+
+        return df.to_dict(orient="records")
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ------------------------------------------------------------------------------
+# CATEGORY IMPACT
+# ------------------------------------------------------------------------------
+@api_router.get("/categories/impact")
 def get_category_impact(start: str, end: str):
-    """Return average market impact by category for a date range."""
     try:
         from backend_database.data_api import TrumpDataClient
-        client = TrumpDataClient(DEFAULT_DB_PATH)
-        df = client.get_category_market_impact(start=start, end=end)
-        if not df.empty:
-            return df[["category", "sp500_5min_pct"]].rename(
-                columns={"sp500_5min_pct": "avg_impact"}
-            ).to_dict(orient="records")
-        return []
-    except Exception as e:
-        return {"error": str(e)}
-
-@app.get("/data/available_dates")
-def get_available_dates():
-    """Return the min and max dates available in the dataset."""
-    try:
-        import sqlite3
-        conn = sqlite3.connect(DEFAULT_DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("SELECT MIN(date), MAX(date) FROM truth_social")
-        min_date, max_date = cursor.fetchone()
-        conn.close()
-        return {"min_date": min_date, "max_date": max_date}
-    except Exception as e:
-        return {"error": str(e)}
-
-@app.get("/posts")
-def get_posts(start_date: str = None, end_date: str = None):
-    """Return posts for a given date range, formatted for frontend."""
-    try:
-        from backend_database.data_api import TrumpDataClient
-        from datetime import datetime
-
-        # Helper to convert various date inputs to YYYY-MM-DD
-        def _parse_date(date_str: str) -> str | None:
-            if not date_str:
-                return None
-            # Try common formats
-            for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%Y%m%d"):
-                try:
-                    return datetime.strptime(date_str, fmt).strftime("%Y-%m-%d")
-                except ValueError:
-                    continue
-            # If all fail, return original (might already be correct)
-            return date_str
-
-        start = _parse_date(start_date)
-        end = _parse_date(end_date)
 
         client = TrumpDataClient(DEFAULT_DB_PATH)
-        df = client.get_full_data(date_from=start, date_to=end)
+        df = client.get_category_market_impact(start, end)
+
         if df.empty:
             return []
-        
-        # Ensure datetime column exists and is string for JSON
-        if 'date' in df.columns:
-            df['datetime'] = pd.to_datetime(df['date'], errors='coerce')
-            df['datetime'] = df['datetime'].dt.strftime('%Y-%m-%d %H:%M:%S')
-        else:
-            df['datetime'] = None
-        
-        # Rename columns to match frontend expectations
-        df = df.rename(columns={
-            "replies_count":    "replies",
-            "reblogs_count":    "reblogs",
-            "favourites_count": "favourites",
-        })
-        
-        # Add missing columns with defaults if not present
-        if "sentiment" not in df.columns:
-            df["sentiment"] = "NEUTRAL"
-        if "sentiment_score" not in df.columns:
-            df["sentiment_score"] = 0.5
-        if "dominant_category" not in df.columns:
-            df["dominant_category"] = "Other"
-        if "has_media" not in df.columns:
-            df["has_media"] = False
-        if "is_president" not in df.columns:
-            df["is_president"] = True
-        if "post_type" not in df.columns:
-            df["post_type"] = "original"
-        
-        import json, math
-        records = df.to_dict(orient="records")
-        clean = [{k: (None if isinstance(v, float) and math.isnan(v) else v) for k, v in r.items()} for r in records]
-        return clean
+
+        return df[["category", "sp500_5min_pct"]].rename(
+            columns={"sp500_5min_pct": "avg_impact"}
+        ).to_dict(orient="records")
+
     except Exception as e:
         return {"error": str(e)}
 
-@app.get("/categories")
-def get_categories(period: str = "month", date_from: str = None, date_to: str = None):
-    """Return category distribution."""
-    try:
-        from backend_database.data_api import TrumpDataClient
-        client = TrumpDataClient(DEFAULT_DB_PATH)
-        # Use get_category_distribution
-        result = client.get_category_distribution(date_from=date_from, date_to=date_to)
-        if isinstance(result, pd.Series):
-            df = pd.DataFrame({"category": result.index, "count": result.values})
-        else:
-            df = result
-        return df.to_dict(orient="records")
-    except Exception as e:
-        return {"error": str(e)}
-
-@app.get("/pipeline/status")
-def pipeline_status():
-    """Return pipeline status for dev dashboard."""
-    try:
-        from backend_database.data_api import TrumpDataClient
-        client = TrumpDataClient(DEFAULT_DB_PATH)
-        kpis = client.get_kpis()
-        return {
-            "last_ingest": "daily @ 00:00 UTC (APScheduler)",
-            "last_preprocess": "on ingest",
-            "last_sentiment_run": "pre-labeled in dataset",
-            "last_embedding_build": "on ingest",
-            "last_gdelt_update": "weekly",
-            "total_posts": int(kpis.get("total_posts", 0)),
-            "posts_today": int(kpis.get("posts_today", 0)),
-            "pct_market_hours": round(float(kpis.get("pct_market_hours", 0)), 1),
-            "model_name": "cardiffnlp/twitter-roberta-base-sentiment",
-            "embedding_model": "all-MiniLM-L6-v2",
-            "dataset_version": "chrissoria/trump-truth-social @ main",
-            "artifact_path": "backend_database/trump_data.db",
-            "status": "healthy",
-            "errors": [],
-        }
-    except Exception as e:
-        return {"status": "error", "errors": [str(e)]}
 
 # ------------------------------------------------------------------------------
-# GDELT Endpoints (for geopolitical page)
+# GDELT
 # ------------------------------------------------------------------------------
-@app.get("/gdelt/range")
-def get_gdelt_range(start: str, end: str):
-    """Return GDELT trend data for a date range."""
+@api_router.get("/gdelt/range")
+def gdelt_range(start: str, end: str):
     try:
         from backend_database.data_api import TrumpDataClient
+
         client = TrumpDataClient(DEFAULT_DB_PATH)
-        df = client.get_gdelt_trend(start=start, end=end)
-        if df.empty:
-            return []
-        df["day"] = pd.to_datetime(df["day"]).dt.strftime("%Y-%m-%d")
-        # Replace NaN with None (JSON compliant)
+        df = client.get_gdelt_trend(start, end)
+
         df = df.replace({np.nan: None})
         return df.to_dict(orient="records")
+
     except Exception as e:
         return {"error": str(e)}
 
-@app.get("/gdelt/summary")
-def get_gdelt_summary(start: str, end: str):
-    """Return GDELT summary metrics for a date range."""
+
+# ------------------------------------------------------------------------------
+# PIPELINE STATUS
+# ------------------------------------------------------------------------------
+@api_router.get("/pipeline/status")
+def pipeline_status():
     try:
         from backend_database.data_api import TrumpDataClient
+
         client = TrumpDataClient(DEFAULT_DB_PATH)
-        df = client.get_gdelt_trend(start=start, end=end)
-        if df.empty:
-            return {}
-        # Build summary
-        summary = {
-            "week_of": pd.to_datetime(df["day"]).max().strftime("%d %b %Y"),
-            "military_events": int(df["gdelt_military"].fillna(0).sum()),
-            "verbal_conflict": int(df["gdelt_verbal_conflict"].fillna(0).sum()),
-            "verbal_cooperation": int(df["gdelt_verbal_cooperation"].fillna(0).sum()),
-            "material_conflict": int(df["gdelt_material_conflict"].fillna(0).sum()),
-            "diplomatic": 0,
-            "goldstein_avg": round(float(df["gdelt_goldstein_avg"].fillna(0).mean()), 2),
-            "avg_tone": round(float(df["gdelt_avg_tone"].fillna(0).mean()), 2),
-            "total_events": int(df["gdelt_total_events"].fillna(0).sum()),
-            "interpretation": (
-                "Global tension elevated — verbal conflict high."
-                if df["gdelt_avg_tone"].mean() < -2 else
-                "Moderate tension detected." if df["gdelt_avg_tone"].mean() < -1 else
-                "Global tone relatively neutral."
-            ),
+        kpis = client.get_kpis()
+
+        return {
+            "total_posts": int(kpis.get("total_posts", 0)),
+            "posts_today": int(kpis.get("posts_today", 0)),
+            "status": "healthy",
         }
-        return summary
+
     except Exception as e:
-        return {"error": str(e)}
+        return {"status": "error", "error": str(e)}
+
 
 # ------------------------------------------------------------------------------
-# Debug Endpoints (optional, keep for monitoring)
+# DEBUG
 # ------------------------------------------------------------------------------
-@app.get("/debug/config")
-def debug_config():
-    return {
-        "API_URL": os.environ.get("API_URL", "not set"),
-        "TRUMPPULSE_DATA_DIR": os.environ.get("TRUMPPULSE_DATA_DIR", "not set"),
-        "CHROMA_DB_PATH": os.environ.get("CHROMA_DB_PATH", "not set"),
-    }
-
-@app.get("/debug/status")
-def debug_status():
+@api_router.get("/debug")
+def debug():
     engine = get_engine()
-    if engine is None:
-        return {"error": "Search engine not yet initialized"}
-    return {
-        "db_path": engine.db_path,
-        "db_exists": os.path.exists(engine.db_path),
-        "posts_loaded": len(engine.posts) if engine.posts else 0,
-    }
 
-@app.get("/debug/paths")
-def debug_paths():
     return {
-        "TRUMPPULSE_DATA_DIR": os.environ.get("TRUMPPULSE_DATA_DIR", "not set"),
-        "DEFAULT_DB_PATH": DEFAULT_DB_PATH,
+        "engine_ready": engine is not None,
+        "posts_loaded": len(engine.posts) if engine else 0,
         "db_exists": os.path.exists(DEFAULT_DB_PATH),
     }
 
-@app.get("/debug/index")
-def debug_index():
-    engine = get_engine()
-    if engine is None:
-        return {"error": "Search engine not yet initialized"}
-    return {
-        "collection_count": len(engine.posts) if engine.posts else 0,
-        "db_path": engine.db_path,
-    }
 
-@app.get("/model/predict/date/{target_date}")
-def predict_date(target_date: str):
-    """Predict next-day market impact for a specific date."""
-    try:
-        from backend.model_predict import predict_latest
-        from datetime import date
-        target = date.fromisoformat(target_date)
-        days_back = (date.today() - target).days + 30
-        result = predict_latest(days=max(days_back, 30))
-        if result.empty:
-            raise ValueError("No prediction available")
-        result["date"] = result["date"].astype(str).str[:10]
-        row_df = result[result["date"] == target_date]
-        if row_df.empty:
-            raise ValueError(f"No prediction for {target_date}")
-        row = row_df.iloc[0]
-        proba = float(row["next_day_impact_proba"])
-        return {
-            "date": target_date,
-            "next_day_impact_proba": proba,
-            "high_impact_pred": int(row["high_impact_pred"]),
-            "impact": "HIGH" if row["high_impact_pred"] == 1 else "LOW",
-            "direction": "UP" if proba >= 0.5 else "DOWN",
-        }
-    except Exception as e:
-        return {"error": str(e)}
+# ------------------------------------------------------------------------------
+# REGISTER ROUTER
+# ------------------------------------------------------------------------------
+app.include_router(api_router)
+
+
+# ------------------------------------------------------------------------------
+# ROOT
+# ------------------------------------------------------------------------------
+@app.get("/")
+def root():
+    return {"status": "running"}
