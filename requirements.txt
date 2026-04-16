@@ -17,3 +17,4 @@ apscheduler
 httpx
 websockets
 xgboost
+seaborn
