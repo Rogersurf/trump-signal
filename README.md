@@ -32,17 +32,16 @@ An MLOps pipeline that ingests Trump's Truth Social posts and generates market i
 ---
 
 ## Pipeline
-HuggingFace Dataset
-↓
-SQLite Database (DVC tracked)
-↓
-Embeddings Cache (MiniLM-L6-v2)
-↓
-XGBoost Classifier (next-day market impact)
-↓
-FastAPI (port 8000)
-↓
-Streamlit Frontend (port 7860)
+
+| Step | Component | Description |
+|---|---|---|
+| 1 | HuggingFace Dataset | Source of Trump's Truth Social posts |
+| 2 | SQLite Database | Local storage, DVC tracked |
+| 3 | Embeddings Cache | MiniLM-L6-v2 vectors for semantic search |
+| 4 | XGBoost Classifier | Predicts next-day market impact |
+| 5 | FastAPI | Serves predictions and search via API |
+| 6 | Streamlit | Interactive frontend on port 7860 |
+
 ---
 
 ## Tech Stack
