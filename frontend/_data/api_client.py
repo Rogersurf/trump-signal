@@ -32,26 +32,44 @@ def is_api_alive() -> bool:
 # Posts (Daily Feed)
 # -----------------------------------------------------------------------------
 def get_posts(start_date=None, end_date=None) -> pd.DataFrame:
-    """Fetch posts from the API. Returns empty DataFrame on failure."""
     params = {}
     if start_date:
         params["start_date"] = str(start_date)
     if end_date:
         params["end_date"] = str(end_date)
+
     try:
         r = requests.get(f"{API_URL}/posts", params=params, timeout=10)
-        if r.status_code == 200:
-            data = r.json()
-            if data:
-                df = pd.DataFrame(data)
-                if "datetime" in df.columns:
-                    df["datetime"] = pd.to_datetime(df["datetime"])
-                if "date" in df.columns:
-                    df["date"] = pd.to_datetime(df["date"])
-                return df
+
+        if r.status_code != 200:
+            print(f"[api_client] get_posts HTTP {r.status_code}")
+            return pd.DataFrame()
+
+        data = r.json()
+
+        # 🔥 FIX PRINCIPAL
+        if isinstance(data, dict):
+            if "error" in data:
+                print(f"[api_client] get_posts API error: {data['error']}")
+                return pd.DataFrame()
+            data = [data]  # fallback secured
+
+        if not data:
+            return pd.DataFrame()
+
+        df = pd.DataFrame(data)
+
+        if "datetime" in df.columns:
+            df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
+
+        if "date" in df.columns:
+            df["date"] = pd.to_datetime(df["date"], errors="coerce")
+
+        return df
+
     except Exception as e:
         print(f"[api_client] get_posts error: {e}")
-    return pd.DataFrame()
+        return pd.DataFrame()
 
 
 def get_sentiments() -> pd.DataFrame:
@@ -75,6 +93,12 @@ def get_category_summary(period: str = "month", date_from: str = None, date_to: 
             data = r.json()
             if data:
                 return pd.DataFrame(data)
+        
+        if isinstance(data, dict):
+            if "error" in data:
+                return pd.DataFrame()
+            data = [data]
+        
     except Exception as e:
         print(f"[api_client] get_category_summary error: {e}")
     return pd.DataFrame(columns=["category", "count"])
@@ -91,6 +115,11 @@ def get_stock_series(index: str = "sp500", days: int = 30) -> pd.DataFrame:
             data = r.json()
             if data:
                 return pd.DataFrame(data)
+        
+        if isinstance(data, dict):
+            if "error" in data:
+                return pd.DataFrame()
+            data = [data]
     except Exception as e:
         print(f"[api_client] get_stock_series error: {e}")
     return pd.DataFrame(columns=["date", "price", "has_big_post", "pct_change"])
