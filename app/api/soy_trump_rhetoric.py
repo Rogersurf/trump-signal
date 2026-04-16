@@ -3,7 +3,7 @@ from fastapi.responses import StreamingResponse
 import io
 import json
 import pandas as pd
-import seaborn as sns
+#import seaborn as sns
 import matplotlib.pyplot as plt
 from fastapi import APIRouter
 from backend_database.data_api import TrumpDataClient
@@ -48,7 +48,7 @@ def get_pie_chart():
         rhetoric_sums,
         labels=[c.replace("cat_", "").replace("_", " ").title() for c in rhetoric_sums.index],
         autopct="%1.1f%%",
-        colors=sns.color_palette("rocket"),
+        #colors=sns.color_palette("rocket"),
     )
     plt.title("Trump Rhetoric Composition")
 
