@@ -18,11 +18,15 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from backend_database.embeddings import get_search_engine
 from backend_database.init_db import DEFAULT_DB_PATH
+from app.api.soy_trump_rhetoric import router as rhetoric_router
+
+
 
 # ------------------------------------------------------------------------------
 # Create FastAPI app FIRST (so Uvicorn can start immediately)
 # ------------------------------------------------------------------------------
 app = FastAPI()
+app.include_router(rhetoric_router)
 
 @app.get("/")
 def root():
@@ -41,22 +45,34 @@ _index_building = False
 
 def _initialize_engine():
     global _engine, _index_ready, _index_building
+
     _index_building = True
+
     try:
         time.sleep(2)
+
         print(f"[STARTUP] Loading search engine from {DEFAULT_DB_PATH}")
+
+        # Load engine (this loads cache or downloads from HF)
         _engine = get_search_engine(DEFAULT_DB_PATH)
+
+        # ❗ IMPORTANT: NEVER build embeddings here
         if _engine.embeddings is None:
-            print("[STARTUP] Embeddings cache missing. Building index (this may take a few minutes)...")
-            _engine.build_index(force=True)
-        print(f"[STARTUP] Engine ready with {len(_engine.posts)} posts.")
+            print("[STARTUP] WARNING: Embeddings not available.")
+        else:
+            print(f"[STARTUP] Engine ready with {len(_engine.posts)} posts.")
+
         _index_ready = True
+
     except Exception as e:
         print(f"[STARTUP] ERROR initializing search engine: {e}")
         _index_ready = False
+
     finally:
         _index_building = False
 
+
+# Run in background (non-blocking startup)
 threading.Thread(target=_initialize_engine, daemon=True).start()
 
 def get_engine():
