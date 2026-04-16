@@ -354,12 +354,18 @@ def debug_index():
 def predict_date(target_date: str):
     """Predict next-day market impact for a specific date."""
     try:
-        from backend.model_predict import predict_for_date
-        result = predict_for_date(target_date)
+        from backend.model_predict import predict_latest
+        from datetime import date
+        target = date.fromisoformat(target_date)
+        days_back = (date.today() - target).days + 30
+        result = predict_latest(days=max(days_back, 30))
         if result.empty:
             raise ValueError("No prediction available")
-        import math
-        row = result.iloc[0]
+        result["date"] = result["date"].astype(str).str[:10]
+        row_df = result[result["date"] == target_date]
+        if row_df.empty:
+            raise ValueError(f"No prediction for {target_date}")
+        row = row_df.iloc[0]
         proba = float(row["next_day_impact_proba"])
         return {
             "date": target_date,
