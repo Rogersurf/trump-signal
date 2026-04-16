@@ -5,14 +5,7 @@ config.py
 REPLACE: API_URL เมื่อ deploy ขึ้น cloud
 """
 
-# REPLACE: เปลี่ยนเป็น URL จริงตอน deploy เช่น https://trumpsignal.app/api
-import os
-# Auto-detect environment
-_space_host = os.environ.get("SPACE_HOST")
-if _space_host:
-    API_URL = os.environ.get("API_URL", f"https://{_space_host}/api")
-else:
-    API_URL = os.environ.get("API_URL", "http://localhost:8000")
+API_URL = "http://127.0.0.1:8000"
 
 TIMEZONES = {
     "UTC":               0,

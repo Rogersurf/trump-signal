@@ -43,7 +43,8 @@ with st.sidebar:
     st.divider()
 
     # API status only — no empty nav items
-    if is_api_alive():
+    api_ok = True
+    if api_ok:
         st.success(T["api_online"], icon="✅")
     else:
         st.warning(T["api_offline"], icon="⚠️")

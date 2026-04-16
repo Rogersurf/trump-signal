@@ -16,7 +16,7 @@ from frontend.config import API_URL
 def is_api_alive() -> bool:
     """Perform a real HTTP health check against the running API with retries."""
     import time
-    max_retries = 40
+    max_retries = 5
     for _ in range(max_retries):
         try:
             r = requests.get(f"{API_URL}/health", timeout=2)
@@ -24,7 +24,7 @@ def is_api_alive() -> bool:
                 return True
         except Exception:
             pass
-        time.sleep(3)
+        time.sleep(1)
     return False
 
 
