@@ -4,7 +4,7 @@ WORKDIR /app
 
 # Install system dependencies including nginx
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc g++ curl nginx && \
+    gcc g++ curl && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Environment variables
