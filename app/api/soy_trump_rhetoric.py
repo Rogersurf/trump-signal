@@ -76,7 +76,7 @@ def get_recent_posts(n: int = 5):
 # MODEL ENDPOINTS
 # ─────────────────────────────────────────────
 
-@router.get("/model/info")
+@router.get("/m/info")
 def get_model_info():
     """
     Return saved model metrics and best threshold.
@@ -104,7 +104,7 @@ def get_model_info():
     }
 
 
-@router.get("/model/predict/latest")
+@router.get("/m/predict/latest")
 def predict_latest_endpoint(
     days: int = Query(default=7, ge=1, le=365, description="Number of recent calendar days to predict")
 ):
@@ -121,7 +121,7 @@ def predict_latest_endpoint(
     return _df_to_json(result)
 
 
-@router.get("/model/predict/date/{target_date}")
+@router.get("/m/predict/date/{target_date}")
 def predict_date_endpoint(target_date: str):
     """
     Predict next-day market impact based on all posts from a specific date.
@@ -138,7 +138,7 @@ def predict_date_endpoint(target_date: str):
     return _df_to_json(result)
 
 
-@router.get("/model/predict/range")
+@router.get("/m/predict/range")
 def predict_range_endpoint(
     start: str = Query(..., description="Start date YYYY-MM-DD"),
     end:   str = Query(..., description="End date YYYY-MM-DD"),
@@ -166,7 +166,7 @@ def predict_range_endpoint(
     return _df_to_json(result)
 
 
-@router.get("/model/predict/today")
+@router.get("/m/predict/today")
 def predict_today_endpoint():
     """
     Predict next-day market impact based on today's posts so far.
@@ -183,7 +183,7 @@ def predict_today_endpoint():
     return _df_to_json(result)
 
 
-@router.get("/model/predict/chart")
+@router.get("/m/predict/chart")
 def predict_chart_endpoint(
     days: int = Query(default=30, ge=7, le=365, description="Number of recent days to chart")
 ):

@@ -61,7 +61,7 @@ def predict_from_posts(posts: pd.DataFrame) -> pd.DataFrame:
     # Aggregate posts to daily level using the same logic as training
     cat_cols_infer   = [c for c in posts.columns if c in CAT_COLS]
     gdelt_cols_infer = [c for c in posts.columns if c in GDELT_COLS]
-    daily, _ = aggregate_daily(posts.copy(), cat_cols_infer, gdelt_cols_infer)
+    daily, _ = aggregate_daily(posts.copy(), cat_cols_infer, gdelt_cols_infer,predict_mode=True)
 
     # Align feature columns (fill missing with 0)
     for c in feature_cols:
