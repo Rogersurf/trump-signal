@@ -17,4 +17,3 @@ apscheduler
 httpx
 websockets
 xgboost
-matplotlib
