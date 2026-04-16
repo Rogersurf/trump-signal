@@ -11,6 +11,7 @@ import threading
 import time
 import pandas as pd
 import numpy as np
+from fastapi import HTTPException
 
 # Add project root to Python path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -22,6 +23,10 @@ from backend_database.init_db import DEFAULT_DB_PATH
 # Create FastAPI app FIRST (so Uvicorn can start immediately)
 # ------------------------------------------------------------------------------
 app = FastAPI()
+
+@app.get("/")
+def root():
+    return {"status": "ok"}
 
 # Add monitoring router
 from app.api import monitoring
@@ -100,7 +105,7 @@ def qa(query: str, limit: int = 5):
         conn.close()
         return {"query": query, "results": enriched}
     except Exception as e:
-        return {"error": str(e)}
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ------------------------------------------------------------------------------
 # Feedback Endpoint
