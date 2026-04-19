@@ -12,6 +12,21 @@ import pandas as pd
 import numpy as np
 
 # ------------------------------------------------------------------------------
+# Fix database path for Hugging Face
+# ------------------------------------------------------------------------------
+import os
+from backend_database.init_db import DEFAULT_DB_PATH as ORIGINAL_DB_PATH
+
+# Override with HF data directory if it exists
+HF_DATA_DIR = os.environ.get("TRUMPPULSE_DATA_DIR")
+if HF_DATA_DIR:
+    DEFAULT_DB_PATH = os.path.join(HF_DATA_DIR, "trump_data.db")
+else:
+    DEFAULT_DB_PATH = ORIGINAL_DB_PATH
+
+print(f"[CONFIG] Using database at: {DEFAULT_DB_PATH}")
+
+# ------------------------------------------------------------------------------
 # Fix Python path (Docker / HF Spaces)
 # ------------------------------------------------------------------------------
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
