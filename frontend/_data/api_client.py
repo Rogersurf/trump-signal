@@ -113,13 +113,12 @@ def get_stock_series(index: str = "sp500", days: int = 30) -> pd.DataFrame:
         r = requests.get(f"{API_URL}/stocks", params={"index": index, "days": days}, timeout=10)
         if r.status_code == 200:
             data = r.json()
-            if data:
+            if isinstance(data, list):
+                if not data:
+                    return pd.DataFrame(columns=["date", "price", "has_big_post", "pct_change"])
                 return pd.DataFrame(data)
-        
-        if isinstance(data, dict):
-            if "error" in data:
-                return pd.DataFrame()
-            data = [data]
+            elif isinstance(data, dict) and "error" in data:
+                return pd.DataFrame(columns=["date", "price", "has_big_post", "pct_change"])
     except Exception as e:
         print(f"[api_client] get_stock_series error: {e}")
     return pd.DataFrame(columns=["date", "price", "has_big_post", "pct_change"])
@@ -179,10 +178,14 @@ def get_pipeline_status() -> dict:
     try:
         r = requests.get(f"{API_URL}/pipeline/status", timeout=5)
         if r.status_code == 200:
-            return r.json()
+            data = r.json()
+            # Ensure required fields exist
+            if "last_ingest" not in data:
+                data["last_ingest"] = "N/A"
+            return data
     except Exception as e:
         print(f"[api_client] get_pipeline_status error: {e}")
-    return {"status": "error", "errors": ["API unreachable"]}
+    return {"status": "error", "errors": ["API unreachable"], "last_ingest": "N/A"}
 
 
 def get_artifact_log() -> pd.DataFrame:

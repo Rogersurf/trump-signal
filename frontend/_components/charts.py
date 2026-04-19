@@ -72,33 +72,86 @@ def category_impact_bar(df: pd.DataFrame) -> go.Figure:
 
 
 def gdelt_tone_bar(df: pd.DataFrame) -> go.Figure:
-    """Bar chart global tone ต่อสัปดาห์"""
+    """Bar chart global tone with star markers for major conflict days."""
     fig = go.Figure()
+    
+    # Main bars showing daily tone
     fig.add_trace(go.Bar(
-        x=df["week"], y=df["avg_tone"],
+        x=df["display_date"], 
+        y=df["avg_tone"],
         marker_color=["#E24B4A" if v < -1.5 else "#378ADD" for v in df["avg_tone"]],
         hovertemplate="%{x}<br>Tone: %{y:.2f}<extra></extra>",
+        name="Daily tone"
     ))
+    
+    # Add star markers for days with high verbal conflict (top 10% most conflictive days)
+    if "verbal_conflict" in df.columns and not df["verbal_conflict"].isna().all():
+        threshold = df["verbal_conflict"].quantile(0.9)
+        high_conflict = df[df["verbal_conflict"] > threshold]
+        
+        if not high_conflict.empty:
+            fig.add_trace(go.Scatter(
+                x=high_conflict["display_date"], 
+                y=high_conflict["avg_tone"],
+                mode="markers", 
+                name="Major conflict days",
+                marker=dict(color="#FFD700", size=12, symbol="star"),
+                hovertemplate="%{x}<br>High conflict day<br>Tone: %{y:.2f}<extra></extra>",
+            ))
+    
     fig.add_hline(y=0, line_width=1, line_color="gray", line_dash="dot")
     fig.update_layout(
-        xaxis_title="Week", yaxis_title="Avg tone (negative = conflict)",
+        xaxis_title="Date", 
+        yaxis_title="Avg tone (negative = conflict)",
         margin=dict(t=10, b=40, l=60, r=20),
+        hovermode="x unified"
     )
     return fig
 
 
 def gdelt_breakdown_bar(gdelt: dict) -> go.Figure:
-    """Bar chart GDELT signals สัปดาห์นี้"""
+    """Bar chart GDELT signals this week - with correct field names."""
+    
+    # FIX: Use actual field names from API response
     df = pd.DataFrame({
-        "signal":  ["Military", "Verbal conflict", "Verbal cooperation", "Material conflict", "Diplomatic"],
-        "count":   [gdelt["military_events"], gdelt["verbal_conflict"],
-                    gdelt["verbal_cooperation"], gdelt["material_conflict"], gdelt["diplomatic"]],
-        "type":    ["negative", "negative", "positive", "negative", "positive"],
+        "signal": [
+            "Military", 
+            "Verbal conflict", 
+            "Material conflict",
+            "Verbal cooperation"
+        ],
+        "count": [
+            gdelt.get("gdelt_military", 0),
+            gdelt.get("gdelt_verbal_conflict", 0),
+            gdelt.get("gdelt_material_conflict", 0),
+            gdelt.get("gdelt_verbal_cooperation", 0)
+        ],
+        "type": [
+            "negative", 
+            "negative", 
+            "negative",
+            "positive"
+        ],
     })
+    
+    # Only include signals with non-zero counts
+    df = df[df["count"] > 0]
+    
+    if df.empty:
+        # Return empty figure with message
+        fig = go.Figure()
+        fig.add_annotation(
+            text="No GDELT signal data available for this period",
+            xref="paper", yref="paper",
+            x=0.5, y=0.5, showarrow=False
+        )
+        fig.update_layout(margin=dict(t=20, b=20))
+        return fig
+    
     fig = px.bar(
         df, x="signal", y="count", color="type",
         color_discrete_map={"negative": "#E24B4A", "positive": "#1D9E75"},
-        labels={"count": "Events this week", "signal": ""},
+        labels={"count": "Events this period", "signal": ""},
     )
     fig.update_layout(margin=dict(t=10, b=20), showlegend=False)
     return fig

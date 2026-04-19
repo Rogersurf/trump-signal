@@ -14,9 +14,12 @@ def _get_available_dates():
         r = requests.get(f"{API_URL}/data/available_dates", timeout=5)
         if r.status_code == 200:
             data = r.json()
-            return pd.to_datetime(data["min_date"]).date(), pd.to_datetime(data["max_date"]).date()
-    except Exception as e:
-        print(f"_get_available_dates error: {e}")
+            if isinstance(data, list) and data:
+                dates = [pd.to_datetime(d).date() for d in data if d]
+                if dates:
+                    return min(dates), max(dates)
+    except Exception:
+        pass
     return date(2022, 1, 1), date.today()
 
 
@@ -51,7 +54,23 @@ def _get_gdelt_summary(start: date, end: date) -> dict:
             timeout=10
         )
         if r.status_code == 200:
-            return r.json()
+            data = r.json()
+            if isinstance(data, list):
+                if not data:
+                    return {}
+                # Aggregate all days in the period
+                return {
+                    "gdelt_military": sum(d.get("gdelt_military", 0) for d in data),
+                    "gdelt_verbal_conflict": sum(d.get("gdelt_verbal_conflict", 0) for d in data),
+                    "gdelt_material_conflict": sum(d.get("gdelt_material_conflict", 0) for d in data),
+                    "gdelt_verbal_cooperation": sum(d.get("gdelt_verbal_cooperation", 0) for d in data),
+                    "gdelt_avg_tone": sum(d.get("gdelt_avg_tone", 0) for d in data) / len(data),
+                    "week_of": f"{start.strftime('%d %b')} - {end.strftime('%d %b')}",
+                    "interpretation": f"Aggregated over {len(data)} days",
+                    # Keep the last day's full data for breakdown chart
+                    "last_day": data[-1] if data else {}
+                }
+            return data
     except Exception as e:
         print(f"GDELT summary error: {e}")
     return {}
@@ -123,15 +142,16 @@ def render(T: dict):
         st.warning(f"📭 No GDELT data available for this period.")
         return
 
-    plot_df = df[["week", "avg_tone", "verbal_conflict"]].reset_index(drop=True)
+    # Use daily data for the chart with display_date column
+    plot_df = df[["day", "avg_tone", "verbal_conflict"]].copy()
+    plot_df["display_date"] = plot_df["day"].dt.strftime("%d %b")
 
     # ── Metrics ───────────────────────────────────────────────────────────────
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Military events",    f"{gdelt.get('military_events', 0):,}")
-    c2.metric("Verbal conflict",    f"{gdelt.get('verbal_conflict', 0):,}")
-    c3.metric("Verbal cooperation", f"{gdelt.get('verbal_cooperation', 0):,}")
-    c4.metric("Avg global tone",    f"{gdelt.get('avg_tone', 0):.2f}",
-              help="Negative = more conflict globally")
+    c1.metric("Military events",    f"{gdelt.get('gdelt_military', 0):,}")
+    c2.metric("Verbal conflict",    f"{gdelt.get('gdelt_verbal_conflict', 0):,}")
+    c3.metric("Verbal cooperation", f"{gdelt.get('gdelt_verbal_cooperation', 0):,}")
+    c4.metric("Material conflict",  f"{gdelt.get('gdelt_material_conflict', 0):,}")
 
     st.divider()
 
@@ -139,9 +159,10 @@ def render(T: dict):
     st.subheader(f"Global tone · {period}")
     st.plotly_chart(gdelt_tone_bar(plot_df), use_container_width=True)
 
-    st.subheader(f"Signal breakdown · {gdelt.get('week_of', '')}")
-    st.plotly_chart(gdelt_breakdown_bar(gdelt), use_container_width=True)
-
+    # Use the last day for the breakdown chart
+    breakdown_data = gdelt.get("last_day", gdelt)
+    st.subheader(f"Signal breakdown · {breakdown_data.get('day', '')[:10]}")
+    st.plotly_chart(gdelt_breakdown_bar(breakdown_data), use_container_width=True)
     st.info(f"**Interpretation:** {gdelt.get('interpretation', '')}")
 
     # ── Export ────────────────────────────────────────────────────────────────
