@@ -377,3 +377,24 @@ print("\n===== REGISTERED ROUTES =====")
 for route in app.routes:
     print(f"  {route.path} -> {route.methods}")
 print("==============================\n")
+
+@app.get("/debug/data")
+def debug_data():
+    import os, sqlite3
+    db_path = os.environ.get("TRUMPPULSE_DATA_DIR", "/data/trump_pulse") + "/trump_data.db"
+    exists = os.path.exists(db_path)
+    
+    count = 0
+    if exists:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM truth_social")
+        count = cursor.fetchone()[0]
+        conn.close()
+    
+    return {
+        "db_path": db_path,
+        "exists": exists,
+        "post_count": count,
+        "env_TRUMPPULSE_DATA_DIR": os.environ.get("TRUMPPULSE_DATA_DIR", "NOT SET")
+    }
