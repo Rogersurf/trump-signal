@@ -334,16 +334,25 @@ def model_predict_date(date: str):
 def pipeline_status():
     try:
         from backend_database.data_api import TrumpDataClient
-
+        import os
+        
         client = TrumpDataClient(DEFAULT_DB_PATH)
         kpis = client.get_kpis()
-
+        
+        # Add debug info
+        db_path = os.environ.get("TRUMPPULSE_DATA_DIR", "/data/trump_pulse") + "/trump_data.db"
+        db_exists = os.path.exists(db_path)
+        
         return {
             "total_posts": int(kpis.get("total_posts", 0)),
             "posts_today": int(kpis.get("posts_today", 0)),
             "status": "healthy",
+            "debug": {
+                "db_path": db_path,
+                "db_exists": db_exists,
+                "env_data_dir": os.environ.get("TRUMPPULSE_DATA_DIR", "NOT SET")
+            }
         }
-
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
@@ -377,24 +386,3 @@ print("\n===== REGISTERED ROUTES =====")
 for route in app.routes:
     print(f"  {route.path} -> {route.methods}")
 print("==============================\n")
-
-@app.get("/debug/data")
-def debug_data():
-    import os, sqlite3
-    db_path = os.environ.get("TRUMPPULSE_DATA_DIR", "/data/trump_pulse") + "/trump_data.db"
-    exists = os.path.exists(db_path)
-    
-    count = 0
-    if exists:
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM truth_social")
-        count = cursor.fetchone()[0]
-        conn.close()
-    
-    return {
-        "db_path": db_path,
-        "exists": exists,
-        "post_count": count,
-        "env_TRUMPPULSE_DATA_DIR": os.environ.get("TRUMPPULSE_DATA_DIR", "NOT SET")
-    }
