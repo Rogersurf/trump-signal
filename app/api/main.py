@@ -25,14 +25,13 @@ from app.api.soy_trump_rhetoric import router as rhetoric_router
 from app.api import monitoring
 
 # ------------------------------------------------------------------------------
-# App + Router
+# App
 # ------------------------------------------------------------------------------
 app = FastAPI()
-api_router = APIRouter(prefix="/api")
 
-# External routers
-app.include_router(rhetoric_router, prefix="/api")
-app.include_router(monitoring.router, prefix="/api")
+# External routers (inclui PRIMEIRO pra evitar conflitos)
+app.include_router(rhetoric_router)
+app.include_router(monitoring.router)
 
 # ------------------------------------------------------------------------------
 # Background Engine (NO rebuild allowed)
@@ -78,9 +77,9 @@ def get_engine():
 
 
 # ------------------------------------------------------------------------------
-# HEALTH
+# HEALTH (só uma, no app direto)
 # ------------------------------------------------------------------------------
-@api_router.get("/health")
+@app.get("/health")
 def health():
     return {"status": "ok"}
 
@@ -88,7 +87,7 @@ def health():
 # ------------------------------------------------------------------------------
 # QA (Semantic Search)
 # ------------------------------------------------------------------------------
-@api_router.get("/qa")
+@app.get("/qa")
 def qa(query: str, limit: int = 5):
     engine = get_engine()
 
@@ -147,7 +146,7 @@ class FeedbackRequest(BaseModel):
     comment: str = ""
 
 
-@api_router.post("/feedback")
+@app.post("/feedback")
 def submit_feedback(feedback: FeedbackRequest):
     conn = sqlite3.connect(DEFAULT_DB_PATH)
     cursor = conn.cursor()
@@ -183,7 +182,7 @@ def submit_feedback(feedback: FeedbackRequest):
 # ------------------------------------------------------------------------------
 # POSTS
 # ------------------------------------------------------------------------------
-@api_router.get("/posts")
+@app.get("/posts")
 def get_posts(start_date: str = None, end_date: str = None):
     try:
         from backend_database.data_api import TrumpDataClient
@@ -205,7 +204,7 @@ def get_posts(start_date: str = None, end_date: str = None):
 # ------------------------------------------------------------------------------
 # STOCKS
 # ------------------------------------------------------------------------------
-@api_router.get("/stocks")
+@app.get("/stocks")
 def get_stocks(index: str = "sp500", days: int = 30):
     try:
         from backend_database.data_api import TrumpDataClient
@@ -222,7 +221,7 @@ def get_stocks(index: str = "sp500", days: int = 30):
 # ------------------------------------------------------------------------------
 # CATEGORIES
 # ------------------------------------------------------------------------------
-@api_router.get("/categories")
+@app.get("/categories")
 def get_categories(date_from: str = None, date_to: str = None):
     try:
         from backend_database.data_api import TrumpDataClient
@@ -242,7 +241,7 @@ def get_categories(date_from: str = None, date_to: str = None):
 # ------------------------------------------------------------------------------
 # CATEGORY IMPACT
 # ------------------------------------------------------------------------------
-@api_router.get("/categories/impact")
+@app.get("/categories/impact")
 def get_category_impact(start: str, end: str):
     try:
         from backend_database.data_api import TrumpDataClient
@@ -264,7 +263,7 @@ def get_category_impact(start: str, end: str):
 # ------------------------------------------------------------------------------
 # GDELT
 # ------------------------------------------------------------------------------
-@api_router.get("/gdelt/range")
+@app.get("/gdelt/range")
 def gdelt_range(start: str, end: str):
     try:
         from backend_database.data_api import TrumpDataClient
@@ -279,10 +278,44 @@ def gdelt_range(start: str, end: str):
         return {"error": str(e)}
 
 
+@app.get("/gdelt/summary")
+def gdelt_summary(start: str, end: str):
+    """Alias for gdelt_range - frontend expects this."""
+    return gdelt_range(start, end)
+
+
+# ------------------------------------------------------------------------------
+# DATA / AVAILABLE DATES
+# ------------------------------------------------------------------------------
+@app.get("/data/available_dates")
+def available_dates():
+    try:
+        conn = sqlite3.connect(DEFAULT_DB_PATH)
+        df = pd.read_sql("SELECT DISTINCT date FROM daily_features ORDER BY date", conn)
+        conn.close()
+        return df["date"].tolist()
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ------------------------------------------------------------------------------
+# MODEL PREDICT
+# ------------------------------------------------------------------------------
+@app.get("/model/predict/date/{date}")
+def model_predict_date(date: str):
+    try:
+        from backend.model_predict import predict_for_date
+        
+        result = predict_for_date(date, DEFAULT_DB_PATH)
+        return result
+    except Exception as e:
+        return {"error": str(e), "date": date}
+
+
 # ------------------------------------------------------------------------------
 # PIPELINE STATUS
 # ------------------------------------------------------------------------------
-@api_router.get("/pipeline/status")
+@app.get("/pipeline/status")
 def pipeline_status():
     try:
         from backend_database.data_api import TrumpDataClient
@@ -303,7 +336,7 @@ def pipeline_status():
 # ------------------------------------------------------------------------------
 # DEBUG
 # ------------------------------------------------------------------------------
-@api_router.get("/debug")
+@app.get("/debug")
 def debug():
     engine = get_engine()
 
@@ -315,18 +348,17 @@ def debug():
 
 
 # ------------------------------------------------------------------------------
-# REGISTER ROUTER
-# ------------------------------------------------------------------------------
-app.include_router(api_router)
-
-
-# ------------------------------------------------------------------------------
 # ROOT
 # ------------------------------------------------------------------------------
 @app.get("/")
 def root():
     return {"status": "running"}
 
-@app.get("/health")
-def health_root():
-    return {"status": "ok"}
+
+# ------------------------------------------------------------------------------
+# DEBUG: Print all registered routes
+# ------------------------------------------------------------------------------
+print("\n===== REGISTERED ROUTES =====")
+for route in app.routes:
+    print(f"  {route.path} -> {route.methods}")
+print("==============================\n")
