@@ -19,7 +19,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 # ------------------------------------------------------------------------------
 # SINGLE SOURCE OF TRUTH FOR DB
 # ------------------------------------------------------------------------------
-
 from backend_database.data_api import DB_PATH
 print(f"[CONFIG] Using database at: {DB_PATH}")
 
@@ -87,6 +86,47 @@ def get_engine():
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+# ------------------------------------------------------------------------------
+# AVAILABLE DATES (FIXED)
+# ------------------------------------------------------------------------------
+@app.get("/data/available_dates")
+def available_dates():
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        df = pd.read_sql(
+            "SELECT DISTINCT date FROM daily_features ORDER BY date",
+            conn
+        )
+        conn.close()
+
+        return df["date"].tolist()
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ------------------------------------------------------------------------------
+# GDELT (FIXED)
+# ------------------------------------------------------------------------------
+@app.get("/gdelt/range")
+def gdelt_range(start: str, end: str):
+    try:
+        from backend_database.data_api import TrumpDataClient
+
+        client = TrumpDataClient(DB_PATH)
+        df = client.get_gdelt_trend(start, end)
+
+        return df.to_dict(orient="records")
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/gdelt/summary")
+def gdelt_summary(start: str, end: str):
+    return gdelt_range(start, end)
 
 
 # ------------------------------------------------------------------------------
@@ -185,7 +225,7 @@ def submit_feedback(feedback: FeedbackRequest):
 
 
 # ------------------------------------------------------------------------------
-# POSTS / STOCKS / ETC
+# POSTS
 # ------------------------------------------------------------------------------
 @app.get("/posts")
 def get_posts(start_date: str = None, end_date: str = None):
@@ -205,6 +245,9 @@ def get_posts(start_date: str = None, end_date: str = None):
         return {"error": str(e)}
 
 
+# ------------------------------------------------------------------------------
+# STOCKS
+# ------------------------------------------------------------------------------
 @app.get("/stocks")
 def get_stocks(index: str = "sp500", days: int = 30):
     try:
@@ -219,6 +262,9 @@ def get_stocks(index: str = "sp500", days: int = 30):
         return {"error": str(e)}
 
 
+# ------------------------------------------------------------------------------
+# CATEGORIES
+# ------------------------------------------------------------------------------
 @app.get("/categories")
 def get_categories(date_from: str = None, date_to: str = None):
     try:
@@ -236,6 +282,9 @@ def get_categories(date_from: str = None, date_to: str = None):
         return {"error": str(e)}
 
 
+# ------------------------------------------------------------------------------
+# CATEGORY IMPACT
+# ------------------------------------------------------------------------------
 @app.get("/categories/impact")
 def get_category_impact(start: str, end: str):
     try:
