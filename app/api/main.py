@@ -1,20 +1,32 @@
 """FastAPI application for TrumpPulse (FULL version, production-ready)."""
 
+# ------------------------------------------------------------------------------
+# IMPORTS
+# ------------------------------------------------------------------------------
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+
 import sqlite3
 from datetime import datetime, timezone
 import threading
 import time
 import os
 import sys
+
 import pandas as pd
 import numpy as np
 
 # ------------------------------------------------------------------------------
 # Fix Python path (Docker / HF Spaces)
 # ------------------------------------------------------------------------------
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+sys.path.insert(
+    0,
+    os.path.dirname(
+        os.path.dirname(
+            os.path.dirname(os.path.abspath(__file__))
+        )
+    )
+)
 
 # ------------------------------------------------------------------------------
 # SINGLE SOURCE OF TRUTH FOR DB
@@ -23,14 +35,14 @@ from backend_database.data_api import DB_PATH
 print(f"[CONFIG] Using database at: {DB_PATH}")
 
 # ------------------------------------------------------------------------------
-# Imports
+# Imports internos
 # ------------------------------------------------------------------------------
 from backend_database.embeddings import get_search_engine
 from app.api.soy_trump_rhetoric import router as rhetoric_router
 from app.api import monitoring
 
 # ------------------------------------------------------------------------------
-# App
+# APP
 # ------------------------------------------------------------------------------
 app = FastAPI()
 
@@ -38,46 +50,114 @@ app.include_router(rhetoric_router)
 app.include_router(monitoring.router)
 
 # ------------------------------------------------------------------------------
-# Background Engine
+# ENGINE STATE (EXPLÍCITO)
 # ------------------------------------------------------------------------------
 _engine = None
 _index_ready = False
 _index_building = False
+_engine_started = False
 
-
+# ------------------------------------------------------------------------------
+# ENGINE INITIALIZATION (VERBOSE)
+# ------------------------------------------------------------------------------
 def _initialize_engine():
     global _engine, _index_ready, _index_building
 
-    _index_building = True
+    retries = 5
+    delay = 3
 
-    try:
-        time.sleep(2)
-        print(f"[STARTUP] Loading search engine from {DB_PATH}")
+    print("[STARTUP] Engine initialization started")
 
-        _engine = get_search_engine(DB_PATH)
+    for attempt in range(retries):
 
-        if _engine.embeddings is None:
-            print("[STARTUP] WARNING: embeddings NOT loaded")
-        else:
-            print(f"[STARTUP] Engine ready with {len(_engine.posts)} posts")
+        print(f"[STARTUP] Attempt {attempt + 1}/{retries}")
 
-        _index_ready = True
-
-    except Exception as e:
-        print(f"[STARTUP] ERROR: {e}")
+        _index_building = True
         _index_ready = False
 
-    finally:
-        _index_building = False
+        try:
+            print(f"[STARTUP] Loading engine from DB: {DB_PATH}")
 
+            engine = get_search_engine(DB_PATH)
 
-threading.Thread(target=_initialize_engine, daemon=True).start()
+            # ---------------- VALIDATION ----------------
+            if engine is None:
+                raise Exception("Engine is None")
+
+            if not hasattr(engine, "embeddings"):
+                raise Exception("Missing embeddings")
+
+            if engine.embeddings is None:
+                raise Exception("Embeddings not loaded")
+
+            if not hasattr(engine, "posts"):
+                raise Exception("Missing posts")
+
+            if len(engine.posts) == 0:
+                raise Exception("No posts loaded")
+
+            # ---------------- SUCCESS ----------------
+            _engine = engine
+            _index_ready = True
+            _index_building = False
+
+            print(f"[STARTUP] SUCCESS: {len(engine.posts)} posts loaded")
+
+            return
+
+        except Exception as e:
+            print(f"[STARTUP] ERROR: {e}")
+
+            _index_ready = False
+            _index_building = True
+
+            if attempt < retries - 1:
+                print(f"[STARTUP] Retrying in {delay}s...")
+                time.sleep(delay)
+
+    print("[STARTUP] FAILED after retries")
+
+    _engine = None
+    _index_ready = False
+    _index_building = False
 
 
 def get_engine():
-    if _index_building or not _index_ready:
+    if _index_building:
+        print("[ENGINE] Requested while building")
         return None
+
+    if not _index_ready:
+        print("[ENGINE] Requested but not ready")
+        return None
+
+    if _engine is None:
+        print("[ENGINE] Unexpected None")
+        return None
+
     return _engine
+
+
+# ------------------------------------------------------------------------------
+# STARTUP THREAD CONTROL
+# ------------------------------------------------------------------------------
+@app.on_event("startup")
+def startup_event():
+    global _engine_started
+
+    if _engine_started:
+        print("[STARTUP] Engine already started")
+        return
+
+    print("[STARTUP] Starting engine thread")
+
+    _engine_started = True
+
+    thread = threading.Thread(
+        target=_initialize_engine,
+        daemon=True
+    )
+    thread.start()
 
 
 # ------------------------------------------------------------------------------
@@ -85,11 +165,36 @@ def get_engine():
 # ------------------------------------------------------------------------------
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "db_exists": os.path.exists(DB_PATH),
+        "engine_ready": _index_ready,
+        "engine_building": _index_building,
+        "engine_loaded": _engine is not None
+    }
 
 
 # ------------------------------------------------------------------------------
-# AVAILABLE DATES (FIXED)
+# MAX DATE
+# ------------------------------------------------------------------------------
+@app.get("/data/max_date")
+def max_date():
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        date = conn.execute("SELECT MAX(date) FROM truth_social").fetchone()[0]
+        conn.close()
+
+        if date is None:
+            return {"max_date": datetime.today().strftime("%Y-%m-%d")}
+
+        return {"max_date": date}
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ------------------------------------------------------------------------------
+# AVAILABLE DATES
 # ------------------------------------------------------------------------------
 @app.get("/data/available_dates")
 def available_dates():
@@ -108,7 +213,7 @@ def available_dates():
 
 
 # ------------------------------------------------------------------------------
-# GDELT (FIXED)
+# GDELT
 # ------------------------------------------------------------------------------
 @app.get("/gdelt/range")
 def gdelt_range(start: str, end: str):
@@ -128,9 +233,6 @@ def gdelt_range(start: str, end: str):
 def gdelt_summary(start: str, end: str):
     return gdelt_range(start, end)
 
-# ------------------------------------------------------------------------------
-# GDELT COMPATIBILITY (FRONTEND EXPECTS THIS)
-# ------------------------------------------------------------------------------
 
 @app.get("/gdelt")
 def gdelt():
@@ -185,101 +287,6 @@ def gdelt_timeseries(weeks: int = 8):
 
 
 # ------------------------------------------------------------------------------
-# QA
-# ------------------------------------------------------------------------------
-@app.get("/qa")
-def qa(query: str, limit: int = 5):
-    engine = get_engine()
-
-    if engine is None:
-        return {"error": "Search engine initializing"}
-
-    try:
-        results = engine.search(query, top_k=limit)
-
-        conn = sqlite3.connect(DB_PATH)
-        enriched = []
-
-        for r in results:
-            post_id = r["post"].get("post_id", "")
-
-            try:
-                row = pd.read_sql(
-                    """
-                    SELECT url,
-                           sp500_5min_before, sp500_5min_after,
-                           qqq_5min_before, qqq_5min_after,
-                           djt_5min_before, djt_5min_after,
-                           during_market_hours
-                    FROM truth_social
-                    WHERE post_id = ?
-                    LIMIT 1
-                    """,
-                    conn,
-                    params=[str(post_id)],
-                )
-
-                if not row.empty:
-                    extra = row.iloc[0].where(pd.notnull(row.iloc[0]), None).to_dict()
-                    r["post"].update(extra)
-
-            except:
-                pass
-
-            enriched.append(r)
-
-        conn.close()
-
-        return {"query": query, "results": enriched}
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ------------------------------------------------------------------------------
-# FEEDBACK
-# ------------------------------------------------------------------------------
-class FeedbackRequest(BaseModel):
-    query: str
-    response: str
-    rating: int
-    comment: str = ""
-
-
-@app.post("/feedback")
-def submit_feedback(feedback: FeedbackRequest):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS feedback (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp TEXT,
-            query TEXT,
-            response TEXT,
-            rating INTEGER,
-            comment TEXT
-        )
-    """)
-
-    cursor.execute(
-        "INSERT INTO feedback (timestamp, query, response, rating, comment) VALUES (?, ?, ?, ?, ?)",
-        (
-            datetime.now(timezone.utc).isoformat(),
-            feedback.query,
-            feedback.response,
-            feedback.rating,
-            feedback.comment,
-        ),
-    )
-
-    conn.commit()
-    conn.close()
-
-    return {"status": "feedback recorded"}
-
-
-# ------------------------------------------------------------------------------
 # POSTS
 # ------------------------------------------------------------------------------
 @app.get("/posts")
@@ -287,116 +294,24 @@ def get_posts(start_date: str = None, end_date: str = None):
     try:
         from backend_database.data_api import TrumpDataClient
 
-        client = TrumpDataClient(DB_PATH)
-        df = client.get_full_data(date_from=start_date, date_to=end_date)
+        print(f"[POSTS] start={start_date} end={end_date}")
 
-        if df.empty:
+        if start_date is None and end_date is None:
+            return {"error": "Date range required"}
+
+        client = TrumpDataClient(DB_PATH)
+
+        df = client.get_full_data(
+            date_from=start_date,
+            date_to=end_date
+        )
+
+        if df is None or df.empty:
             return []
 
         df = df.replace({np.nan: None})
-        return df.to_dict(orient="records")
-
-    except Exception as e:
-        return {"error": str(e)}
-
-
-# ------------------------------------------------------------------------------
-# STOCKS
-# ------------------------------------------------------------------------------
-@app.get("/stocks")
-def get_stocks(index: str = "sp500", days: int = 30):
-    try:
-        from backend_database.data_api import TrumpDataClient
-
-        client = TrumpDataClient(DB_PATH)
-        df = client.get_stock_series(index, days)
 
         return df.to_dict(orient="records")
 
     except Exception as e:
         return {"error": str(e)}
-
-
-# ------------------------------------------------------------------------------
-# CATEGORIES
-# ------------------------------------------------------------------------------
-@app.get("/categories")
-def get_categories(date_from: str = None, date_to: str = None):
-    try:
-        from backend_database.data_api import TrumpDataClient
-
-        client = TrumpDataClient(DB_PATH)
-        df = client.get_category_distribution(date_from, date_to)
-
-        if isinstance(df, pd.Series):
-            df = pd.DataFrame({"category": df.index, "count": df.values})
-
-        return df.to_dict(orient="records")
-
-    except Exception as e:
-        return {"error": str(e)}
-
-
-# ------------------------------------------------------------------------------
-# CATEGORY IMPACT
-# ------------------------------------------------------------------------------
-@app.get("/categories/impact")
-def get_category_impact(start: str, end: str):
-    try:
-        from backend_database.data_api import TrumpDataClient
-
-        client = TrumpDataClient(DB_PATH)
-        df = client.get_category_market_impact(start, end)
-
-        if df.empty:
-            return []
-
-        return df[["category", "sp500_5min_pct"]].rename(
-            columns={"sp500_5min_pct": "avg_impact"}
-        ).to_dict(orient="records")
-
-    except Exception as e:
-        return {"error": str(e)}
-
-
-# ------------------------------------------------------------------------------
-# MODEL
-# ------------------------------------------------------------------------------
-@app.get("/model/predict/date/{date}")
-def model_predict_date(date: str):
-    try:
-        from backend.model_predict import predict_for_date
-        return predict_for_date(date)
-    except Exception as e:
-        return {"error": str(e), "date": date}
-
-
-# ------------------------------------------------------------------------------
-# DEBUG
-# ------------------------------------------------------------------------------
-@app.get("/debug")
-def debug():
-    engine = get_engine()
-
-    return {
-        "engine_ready": engine is not None,
-        "posts_loaded": len(engine.posts) if engine else 0,
-        "db_exists": os.path.exists(DB_PATH),
-    }
-
-
-# ------------------------------------------------------------------------------
-# ROOT
-# ------------------------------------------------------------------------------
-@app.get("/")
-def root():
-    return {"status": "running"}
-
-
-# ------------------------------------------------------------------------------
-# ROUTES DEBUG
-# ------------------------------------------------------------------------------
-print("\n===== REGISTERED ROUTES =====")
-for route in app.routes:
-    print(f"  {route.path} -> {route.methods}")
-print("==============================\n")

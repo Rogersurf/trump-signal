@@ -4,7 +4,8 @@ import pandas as pd
 from datetime import datetime, date, timedelta
 from frontend._data.api_client import get_posts
 from frontend._components.post_card import _detect_topics, _get_effects
-from backend_database.data_api import DB_PATH
+import requests
+from frontend.config import API_URL
 
 STOCK_OPTIONS = {
     "all":   "All stocks",
@@ -93,17 +94,14 @@ def _get_market_status() -> tuple:
         return "🟢 Market open", "#1D9E75"
     return "🔴 Market closed", "#E24B4A"
 
-
+st.write("DEBUG FEED LOADED")
 def render(T: dict, tz_offset: int):
     # get dataset max date dynamically
     try:
-        import sqlite3
-        conn = sqlite3.connect(DB_PATH)
-        ds_end = pd.to_datetime(conn.execute("SELECT MAX(date) FROM truth_social").fetchone()[0]).date()
-        conn.close()
+        r = requests.get(f"{API_URL}/data/max_date", timeout=5)
+        ds_end = pd.to_datetime(r.json()["max_date"]).date()
     except:
         ds_end = date.today()
-    today  = min(date.today(), ds_end)
 
     # ── Live clock + market status ────────────────────────────────────────────
     clock_col, status_col, _ = st.columns([2, 2, 3])
