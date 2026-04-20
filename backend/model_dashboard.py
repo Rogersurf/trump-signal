@@ -56,6 +56,10 @@ def build_dashboard(posts: pd.DataFrame,
                     metrics: dict,
                     cat_cols: list,
                     gdelt_cols: list) -> dash.Dash:
+    
+    # FIX: ensure market_period exists (daily data does not have it)
+    if "market_period" not in posts.columns:
+        posts["market_period"] = "unknown"
 
     app       = dash.Dash(__name__, external_stylesheets=[dbc.themes.DARKLY])
     has_proba = "impact_proba" in posts.columns and posts["impact_proba"].notna().any()
@@ -160,7 +164,10 @@ def build_dashboard(posts: pd.DataFrame,
         )
 
     # ── Layout ───────────────────────────────────────────
-    market_periods = sorted(posts["market_period"].dropna().unique().tolist())
+    if "market_period" in posts.columns:
+        market_periods = sorted(posts["market_period"].dropna().unique().tolist())
+    else:
+        market_periods = ["unknown"]
     ticker_options = [
         {"label": f"{TICKER_NAMES.get(t, t)} ({t.upper()})", "value": t}
         for t in TICKERS if f"{t}_daily_ret" in posts.columns
@@ -407,7 +414,26 @@ def build_dashboard(posts: pd.DataFrame,
 
 # ─────────────────────────────────────────────
 if __name__ == "__main__":
-    posts, importance, metrics, cat_cols, gdelt_cols = run_pipeline()
-    app = build_dashboard(posts, importance, metrics, cat_cols, gdelt_cols)
-    print("\n🚀  Starting dashboard on http://0.0.0.0:8050 …")
+    # 1. Run pipeline to train model and get metrics
+    daily, importance, metrics, cat_cols, gdelt_cols = run_pipeline()
+
+    # 2. Load RAW posts (NOT aggregated daily data)
+    from backend.model_training import load_posts
+    raw_posts, _, _ = load_posts()
+
+    # 3. Merge predictions (daily → raw posts)
+    # This allows each post to inherit the day's prediction
+    if "date" in raw_posts.columns and "date" in daily.columns:
+        raw_posts = raw_posts.merge(
+        daily[["date", "impact_proba", "high_impact"]],
+        on="date",
+        how="left"
+    )
+
+    # 4. Build dashboard using RAW data (correct input)
+    raw_posts["primary_ret"] = raw_posts.get("sp500_close", 0)
+    raw_posts["market_period"] = raw_posts.get("market_period", "unknown")
+    app = build_dashboard(raw_posts, importance, metrics, cat_cols, gdelt_cols)
+
+    print("\n🚀 Starting dashboard on http://0.0.0.0:8050 …")
     app.run(debug=False, host="0.0.0.0", port=8050)

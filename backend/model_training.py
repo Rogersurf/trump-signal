@@ -32,7 +32,7 @@ from sklearn.model_selection import TimeSeriesSplit, cross_val_score
 from sklearn.preprocessing import StandardScaler
 from xgboost import XGBClassifier
 
-from backend_database.data_api import DB_PATH
+from backend_database.init_db import DB_PATH
 
 warnings.filterwarnings("ignore")
 

@@ -75,4 +75,4 @@ tests/chroma_db/
 # ==============================
 # Model artifacts
 # ==============================
-backend/model_artifacts/*.pkl
+backend/model_artifacts/
