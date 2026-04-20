@@ -7,6 +7,8 @@ import datetime
 import os
 from backend_database.init_db import DEFAULT_DB_PATH
 
+# Single source of truth for DB path
+DB_PATH = os.environ.get("TRUMPPULSE_DB_PATH", "trump_data.db")
 print("[DEBUG] Using DB:", DEFAULT_DB_PATH)
 
 class TrumpDataClient:
