@@ -103,6 +103,8 @@ def render(T: dict, tz_offset: int):
     except:
         ds_end = date.today()
 
+    today = min(date.today(), ds_end)
+
     # ── Live clock + market status ────────────────────────────────────────────
     clock_col, status_col, _ = st.columns([2, 2, 3])
     with clock_col:
