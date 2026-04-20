@@ -19,8 +19,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 # ------------------------------------------------------------------------------
 # SINGLE SOURCE OF TRUTH FOR DB
 # ------------------------------------------------------------------------------
-from backend_database.data_api import DB_PATH
 
+from backend_database.data_api import DB_PATH
 print(f"[CONFIG] Using database at: {DB_PATH}")
 
 # ------------------------------------------------------------------------------

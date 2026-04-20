@@ -7,9 +7,32 @@ import datetime
 import os
 from backend_database.init_db import DEFAULT_DB_PATH
 
-# Single source of truth for DB path
-DB_PATH = os.environ.get("TRUMPPULSE_DB_PATH", "trump_data.db")
-print("[DEBUG] Using DB:", DEFAULT_DB_PATH)
+import os
+
+def get_db_path():
+    """
+    Single source of truth for database path.
+    Priority:
+    1. HF / Docker env
+    2. Local fallback
+    """
+    base = os.environ.get("TRUMPPULSE_DATA_DIR")
+
+    if base:
+        return os.path.join(base, "trump_data.db")
+
+    return os.path.abspath("trump_data.db")
+
+
+# Global constant (optional, but consistent)
+DB_PATH = get_db_path()
+
+DB_PATH = os.environ.get(
+    "TRUMPPULSE_DATA_DIR",
+    "."
+)
+
+DB_PATH = os.path.join(DB_PATH, "trump_data.db")
 
 class TrumpDataClient:
     def __init__(self, db_path=DEFAULT_DB_PATH):

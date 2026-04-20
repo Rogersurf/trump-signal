@@ -22,7 +22,7 @@ from datasets import load_dataset
 # Ensure project root is in path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from backend_database.init_db import DB_PATH
+from backend_database.data_api import DB_PATH
 
 HF_SOURCE = "chrissoria/trump-truth-social"
 
