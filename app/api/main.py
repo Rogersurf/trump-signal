@@ -128,6 +128,61 @@ def gdelt_range(start: str, end: str):
 def gdelt_summary(start: str, end: str):
     return gdelt_range(start, end)
 
+# ------------------------------------------------------------------------------
+# GDELT COMPATIBILITY (FRONTEND EXPECTS THIS)
+# ------------------------------------------------------------------------------
+
+@app.get("/gdelt")
+def gdelt():
+    try:
+        from backend_database.data_api import TrumpDataClient
+
+        client = TrumpDataClient(DB_PATH)
+
+        end = datetime.now()
+        start = end - pd.Timedelta(days=30)
+
+        df = client.get_gdelt_trend(
+            start.strftime("%Y-%m-%d"),
+            end.strftime("%Y-%m-%d")
+        )
+
+        return df.to_dict(orient="records")
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/gdelt/timeseries")
+def gdelt_timeseries(weeks: int = 8):
+    try:
+        from backend_database.data_api import TrumpDataClient
+
+        client = TrumpDataClient(DB_PATH)
+
+        end = datetime.now()
+        start = end - pd.Timedelta(weeks=weeks)
+
+        df = client.get_gdelt_trend(
+            start.strftime("%Y-%m-%d"),
+            end.strftime("%Y-%m-%d")
+        )
+
+        if df.empty:
+            return []
+
+        df["week"] = pd.to_datetime(df["date"]).dt.to_period("W").astype(str)
+
+        agg = df.groupby("week").agg({
+            "gdelt_avg_tone": "mean",
+            "gdelt_verbal_conflict": "mean"
+        }).reset_index()
+
+        return agg.to_dict(orient="records")
+
+    except Exception as e:
+        return {"error": str(e)}
+
 
 # ------------------------------------------------------------------------------
 # QA
