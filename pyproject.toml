@@ -5,6 +5,9 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "trump-signal"
 version = "0.1.0"
+dependencies = [
+    "huggingface-hub>=1.11.0",
+]
 
 [tool.setuptools]
 # app, backend, frontend etc into package, avoid search path issues

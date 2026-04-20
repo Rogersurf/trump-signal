@@ -1,47 +1,78 @@
-# Python virtual environment (huge)
+# ==============================
+# Python environments
+# ==============================
 venv/
 .venv/
 env/
 .env
 
-# Git and DVC
-.git/
-.dvc/
-*.dvc
-
-# Database files (large)
-*.db
-*.pkl
-
+# ==============================
 # Python cache
+# ==============================
 __pycache__/
 *.pyc
 *.pyo
 
+# ==============================
+# Build / packaging
+# ==============================
+*.egg-info/
+dist/
+build/
+
+# ==============================
+# Dependency / lock files
+# ==============================
+uv.lock
+
+# ==============================
+# Databases & artifacts
+# ==============================
+*.db
+*.pkl
+
+# ==============================
 # Data directories
-data/raw/
-data/processed/
+# ==============================
+data/
 artifacts/
 
-# IDE and OS files
+# ==============================
+# Chroma / vector DB
+# ==============================
+chroma_db/
+backend_database/chroma_db/
+tests/chroma_db/
+
+# ==============================
+# Git / DVC (normally NOT ignored, but keeping your choice)
+# ==============================
+.dvc/
+*.dvc
+
+# ==============================
+# IDE / OS
+# ==============================
 .idea/
 .vscode/
 .DS_Store
 
-# Docker files (avoid recursion)
-Dockerfile
-.dockerignore
-
-# Jupyter/Colab notebooks
+# ==============================
+# Notebooks
+# ==============================
 *.ipynb
 
+# ==============================
 # Streamlit
+# ==============================
 .streamlit/
 
-# pytest
-.pytest_cache/chroma_db/
-backend_database/chroma_db/
-tests/chroma_db/
-data/trump_pulse.db
-data/trump_pulse.db
+# ==============================
+# Testing
+# ==============================
+.pytest_cache/
+
+# ==============================
+# Model artifacts
+# ==============================
 backend/model_artifacts/*.pkl

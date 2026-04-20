@@ -5,14 +5,12 @@ import sqlite3
 import pandas as pd
 import datetime
 import os
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-_DATA_DIR = os.environ.get("TRUMPPULSE_DATA_DIR")
-if _DATA_DIR:
-    DB_PATH = os.path.join(_DATA_DIR, "trump_data.db")
-else:
-    DB_PATH = os.path.join(BASE_DIR, "trump_data.db")
+from backend_database.init_db import DEFAULT_DB_PATH
+
+print("[DEBUG] Using DB:", DEFAULT_DB_PATH)
+
 class TrumpDataClient:
-    def __init__(self, db_path=DB_PATH):
+    def __init__(self, db_path=DEFAULT_DB_PATH):
         self.db_path = db_path
 
     def _get_conn(self):
@@ -270,14 +268,14 @@ class TrumpDataClient:
         if total_posts == 0:
             raise ValueError(f"No data found between {start} and {end}")
 
-        scores = row[list(CAT_LABELS.keys())]
+        scores = pd.to_numeric(row[list(CAT_LABELS.keys())], errors="coerce").fillna(0)
         total_score = scores.sum()
         print('*'*40)
 
         print(scores)
         df = pd.DataFrame({
             "category": list(CAT_LABELS.values()),
-            "ratio_pct": scores.values.round(4),
+            "ratio_pct": scores.astype(float).values.round(4),
             # "ratio_pct": (scores.values / total_score * 100).round(2),
         })
         df["date_from"] = start

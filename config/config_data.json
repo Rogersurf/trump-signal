@@ -1,4 +1,6 @@
 {
-  "hf_repo": "your-username/trump-truth-social-backup",
-  "db_path": "/data/trump_pulse/trump_data.db"
+    "hf_raw_data": "https://huggingface.co/datasets/chrissoria/trump-truth-social",
+    "hf_repo": "https://huggingface.co/spaces/Rogersurf/trump-signal/",
+    "hf_db_repo": "https://huggingface.co/datasets/Rogersurf/trump_pulse_data",
+    "hf_emb_repo": "https://huggingface.co/datasets/Rogersurf/trump-pulse-embeddings"
 }

@@ -2,6 +2,7 @@
 import os
 import json
 from fastapi import APIRouter, Response
+from backend_database.init_db import DEFAULT_DB_PATH as DB_PATH
 
 router = APIRouter()
 
@@ -11,9 +12,6 @@ request_counts = {
     "qa_requests": 0,
     "pipeline_triggers": 0
 }
-
-DB_PATH = "trump_data.db"  # Same as used in main.py
-
 
 def increment_counter(endpoint: str):
     """Increment the counter for a given endpoint."""

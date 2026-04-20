@@ -1,63 +1,152 @@
-"""Initialize the SQLite database with Trump Truth Social posts (all columns)."""
-import sqlite3
-import pandas as pd
-from datasets import load_dataset
 import os
-import argparse
+import json
+import requests
+from datetime import datetime
+from huggingface_hub import hf_hub_download, upload_file
+import shutil
 
-HF_REPO = "chrissoria/trump-truth-social"
+# ==============================
+# LOAD CONFIG
+# ==============================
+CONFIG_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "config", "config_data.json")
+)
 
-# Default database location – always inside backend_database/ unless overridden
-_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-_DATA_DIR = os.environ.get("TRUMPPULSE_DATA_DIR")
-if _DATA_DIR:
-    DEFAULT_DB_PATH = os.path.join(_DATA_DIR, "trump_data.db")
-else:
-    DEFAULT_DB_PATH = os.path.join(_BASE_DIR, "trump_data.db")
+print("CONFIG_PATH:", CONFIG_PATH)
+
+with open(CONFIG_PATH) as f:
+    config = json.load(f)
+
+HF_DB_REPO = config["hf_db_repo"].replace("https://huggingface.co/datasets/", "")
+HF_RAW_DATA = config["hf_raw_data"]
+
+# ==============================
+# FILE NAMING (NO HARDCODE VERSION)
+# ==============================
+HF_FILENAME_LATEST = "trump_data_latest.db"
+
+def generate_versioned_filename():
+    timestamp = datetime.utcnow().strftime("%Y-%m-%d_%H-%M-%S")
+    return f"trump_data_{timestamp}.db"
+
+# ==============================
+# PATHS
+# ==============================
+LOCAL_DB_DIR = os.environ.get("TRUMPPULSE_DATA_DIR", ".")
+os.makedirs(LOCAL_DB_DIR, exist_ok=True)
+
+DB_PATH = os.path.join(LOCAL_DB_DIR, "trump_data.db")
+DEFAULT_DB_PATH = os.path.abspath(DB_PATH)
 
 
-def initialize(db_path: str = None):
-    """
-    Download full dataset and create SQLite database.
-    If db_path is provided, it is used exactly. Otherwise, the location is determined
-    by TRUMPPULSE_DATA_DIR or the default backend_database/ directory.
-    """
-    if db_path is None:
-        data_dir = os.environ.get("TRUMPPULSE_DATA_DIR")
-        if data_dir:
-            db_path = os.path.join(data_dir, "trump_data.db")
-        else:
-            db_path = DEFAULT_DB_PATH
+# ==============================
+# DOWNLOAD FROM HF
+# ==============================
+def download_from_hf():
+    try:
+        print("📥 Trying HF latest DB...")
+        file_path = hf_hub_download(
+            repo_id=HF_DB_REPO,
+            filename=HF_FILENAME_LATEST,
+            repo_type="dataset"
+        )
+        shutil.copy(file_path, DB_PATH)
+        print("✅ Loaded DB from HF (latest)")
+        return True
+    except Exception as e:
+        print("⚠️ HF download failed:", e)
+        return False
 
-    # Ensure parent directory exists
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
 
-    if os.path.exists(db_path):
-        print(f"Database {db_path} already exists. Skipping initialization.")
-        return
+# ==============================
+# DOWNLOAD FROM CHRISSORIA
+# ==============================
+def download_from_chrissoria():
+    try:
+        print("📥 Downloading dataset from chrissoria (HF API)...")
 
-    print("--- Starting first-time initialization ---")
-    print(f"Downloading full dataset from Hugging Face: {HF_REPO}...")
+        file_path = hf_hub_download(
+            repo_id="chrissoria/trump-truth-social",
+            filename="data/train-00000-of-00001.parquet",
+            repo_type="dataset"
+        )
 
-    dataset = load_dataset(HF_REPO)
-    df = dataset['train'].to_pandas()
+        print(f"✅ Downloaded: {file_path}")
 
-    if 'date' in df.columns:
-        df['date'] = pd.to_datetime(df['date']).dt.strftime('%Y-%m-%d %H:%M:%S')
+        import pandas as pd
+        import sqlite3
 
-    print(f"Writing {len(df)} records with {len(df.columns)} columns to {db_path}...")
-    with sqlite3.connect(db_path) as conn:
+        df = pd.read_parquet(file_path)
+
+        conn = sqlite3.connect(DB_PATH)
         df.to_sql("truth_social", conn, if_exists="replace", index=False)
-        if 'date' in df.columns:
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_date ON truth_social (date)")
-        if 'post_id' in df.columns:
-            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_post_id ON truth_social (post_id)")
+        conn.close()
 
-    print("--- Initialization successful! ---")
+        print("✅ DB created from dataset")
 
+    except Exception as e:
+        print("❌ Failed:", e)
+        raise
+
+    except Exception as e:
+        print("❌ Failed to process chrissoria data:", e)
+        raise
+
+
+# ==============================
+# UPLOAD TO HF (VERSIONED + LATEST)
+# ==============================
+def upload_to_hf():
+    try:
+        print("📤 Uploading DB to HF...")
+
+        versioned_name = generate_versioned_filename()
+
+        # Upload versioned file
+        upload_file(
+            path_or_fileobj=DB_PATH,
+            path_in_repo=versioned_name,
+            repo_id=HF_DB_REPO,
+            repo_type="dataset"
+        )
+
+        # Upload latest (overwrite)
+        upload_file(
+            path_or_fileobj=DB_PATH,
+            path_in_repo=HF_FILENAME_LATEST,
+            repo_id=HF_DB_REPO,
+            repo_type="dataset"
+        )
+
+        print(f"✅ Uploaded as {versioned_name} + latest")
+
+    except Exception as e:
+        print("⚠️ Upload failed:", e)
+
+
+# ==============================
+# INIT DB (MAIN ENTRYPOINT)
+# ==============================
+def init_db():
+    print("🚀 Initializing database...")
+
+    # 1. Already exists locally
+    if os.path.exists(DB_PATH):
+        print("✅ Using local DB")
+        return DB_PATH
+
+    # 2. Try HF
+    if download_from_hf():
+        return DB_PATH
+
+    # 3. Fallback → chrissoria
+    download_from_chrissoria()
+
+    # 4. Upload to YOUR HF
+    upload_to_hf()
+
+    return DB_PATH
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--db-path", default=None)
-    args = parser.parse_args()
-    initialize(args.db_path)
+    path = init_db()
+    print(f"✅ DB initialized at: {path}")
