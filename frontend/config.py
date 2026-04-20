@@ -5,14 +5,8 @@ config.py
 REPLACE: API_URL เมื่อ deploy ขึ้น cloud
 """
 
-import os
 
-_space_host = os.environ.get("SPACE_HOST")
-
-if _space_host:
-    API_URL = f"https://{_space_host}/"
-else:
-    API_URL = "http://localhost:8000"
+API_URL = "http://localhost:8000"
 
 TIMEZONES = {
     "UTC":               0,
