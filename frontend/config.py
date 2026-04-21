@@ -7,12 +7,11 @@ REPLACE: API_URL เมื่อ deploy ขึ้น cloud
 
 import os
 
-_space_host = os.environ.get("SPACE_HOST")
+import requests
 
-if _space_host:
-    API_URL = f"https://{_space_host}/"
-else:
-    API_URL = "http://localhost:8000"
+API = "https://rogersurf-trump-signal-api-v2.hf.space"
+
+data = requests.get(f"{API}/predict/latest").json()
 
 TIMEZONES = {
     "UTC":               0,
