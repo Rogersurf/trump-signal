@@ -189,9 +189,7 @@ def predict_date(date: str):
     try:
         return predict_for_date(date)
     except Exception as e:
-        print("🔥 PREDICT ERROR:", str(e))
-        traceback.print_exc()
-        return {"error": str(e)}
+        return {"error": "model not ready yet"}
 
 
 # ------------------------------------------------------------------------------

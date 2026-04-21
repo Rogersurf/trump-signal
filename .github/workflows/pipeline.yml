@@ -24,21 +24,17 @@ jobs:
           pip install huggingface_hub
 
       # ─────────────────────────────
-      # 1. UPDATE DATABASE
-      # ─────────────────────────────
-      - name: Update DB
-        run: |
-          python backend_database/update_db.py
-
-      # ─────────────────────────────
       # 2. TRAIN MODEL
       # ─────────────────────────────
       - name: Train model
         run: |
-          python backend/model_training.py \
             --data-dir ./data \
             --db-path ./trump_data.db \
             --chroma-db-path ./chroma_db
+      
+      - name: Check artifacts
+        run: |
+          ls -lh backend/model_artifacts
 
       # ─────────────────────────────
       # 3. PUSH TO HF DATASET
