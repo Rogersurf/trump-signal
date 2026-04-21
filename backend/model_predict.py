@@ -4,7 +4,7 @@ from pathlib import Path
 
 import joblib
 import numpy as np
-import pandas as pd   # ← THIS MUST BE HERE
+import pandas as pd
 
 from backend.model_training import (
     MODEL_DIR,
@@ -13,10 +13,14 @@ from backend.model_training import (
     aggregate_daily,
     load_posts,
 )
+
+warnings.filterwarnings("ignore")
+
+
+# ─────────────────────────────────────────────
+# CORE
+# ─────────────────────────────────────────────
 def predict_from_posts(posts: pd.DataFrame) -> pd.DataFrame:
-    """
-    Aggregate posts to daily level and predict next-day market impact.
-    """
 
     if not (MODEL_DIR / "xgb_model.pkl").exists():
         raise FileNotFoundError(
@@ -29,73 +33,44 @@ def predict_from_posts(posts: pd.DataFrame) -> pd.DataFrame:
     with open(MODEL_DIR / "feature_cols.json") as f:
         feature_cols = json.load(f)
 
-    print(f"      Model loaded  |  Expected features: {len(feature_cols)}")
-    print(f"      STEP 1 - RAW POSTS: {len(posts)}")
+    print(f"Model loaded | features: {len(feature_cols)}")
+    print(f"RAW POSTS: {len(posts)}")
 
-    # ─────────────────────────────
-    # AGGREGATION
-    # ─────────────────────────────
     cat_cols_infer   = [c for c in posts.columns if c in CAT_COLS]
     gdelt_cols_infer = [c for c in posts.columns if c in GDELT_COLS]
 
     daily, _ = aggregate_daily(posts.copy(), cat_cols_infer, gdelt_cols_infer)
 
-    print(f"      STEP 2 - DAILY ROWS AFTER AGG: {len(daily)}")
+    print(f"DAILY ROWS: {len(daily)}")
 
     if daily is None or daily.empty:
-        print("🔥 WARNING: aggregate_daily returned EMPTY dataframe")
+        return pd.DataFrame(columns=[
+            "date",
+            "post_count",
+            "next_day_impact_proba",
+            "high_impact_pred"
+        ])
 
-        return pd.DataFrame([{
-            "date": None,
-            "post_count": 0,
-            "next_day_impact_proba": 0.0,
-            "high_impact_pred": 0,
-            "error": "No data after aggregation"
-        }])
-
-    # ─────────────────────────────
-    # FEATURE ALIGNMENT
-    # ─────────────────────────────
     for c in feature_cols:
         if c not in daily.columns:
             daily[c] = 0.0
 
-    # Ensure correct column order
-    X_df = daily[feature_cols].copy()
-
-    print(f"      STEP 3 - FEATURE DF SHAPE: {X_df.shape}")
-
-    X_df = X_df.fillna(0).astype(float)
+    X_df = daily[feature_cols].fillna(0).astype(float)
 
     if X_df.shape[0] == 0:
-        print("🔥 WARNING: Feature matrix is empty")
+        return pd.DataFrame(columns=[
+            "date",
+            "post_count",
+            "next_day_impact_proba",
+            "high_impact_pred"
+        ])
 
-        return pd.DataFrame([{
-            "date": None,
-            "post_count": 0,
-            "next_day_impact_proba": 0.0,
-            "high_impact_pred": 0,
-            "error": "Empty feature matrix"
-        }])
-
-    # ─────────────────────────────
-    # SCALING + PREDICTION
-    # ─────────────────────────────
     X = X_df.values
     X_sc = scaler.transform(X)
 
     daily["next_day_impact_proba"] = clf.predict_proba(X_sc)[:, 1]
     daily["high_impact_pred"]      = (daily["next_day_impact_proba"] >= 0.5).astype(int)
 
-    high_risk = daily["high_impact_pred"].sum()
-
-    print(f"      STEP 4 - FINAL ROWS: {len(daily)}")
-    print(f"      High-risk days: {high_risk}")
-    print(f"      Max proba: {daily['next_day_impact_proba'].max():.3f}")
-
-    # ─────────────────────────────
-    # OUTPUT
-    # ─────────────────────────────
     keep = [
         "date",
         "post_count",
@@ -104,7 +79,6 @@ def predict_from_posts(posts: pd.DataFrame) -> pd.DataFrame:
         "next_day_impact_proba",
         "high_impact_pred"
     ]
-
     keep = [c for c in keep if c in daily.columns]
 
     return (
@@ -112,3 +86,41 @@ def predict_from_posts(posts: pd.DataFrame) -> pd.DataFrame:
         .sort_values("date", ascending=False)
         .reset_index(drop=True)
     )
+
+
+# ─────────────────────────────────────────────
+# LATEST
+# ─────────────────────────────────────────────
+def predict_latest(days: int = 7) -> pd.DataFrame:
+    raw, _, _ = load_posts()
+
+    cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=days)
+    recent = raw[raw["datetime"] >= cutoff].copy()
+
+    if recent.empty:
+        cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=30)
+        recent = raw[raw["datetime"] >= cutoff].copy()
+
+    if recent.empty:
+        raise ValueError("No posts available")
+
+    print(f"Input: {len(recent)} posts")
+
+    return predict_from_posts(recent)
+
+
+# ─────────────────────────────────────────────
+# DATE
+# ─────────────────────────────────────────────
+def predict_for_date(target_date: str) -> pd.DataFrame:
+    raw, _, _ = load_posts()
+
+    target = pd.Timestamp(target_date).normalize()
+    day_posts = raw[raw["date"].dt.normalize() == target].copy()
+
+    if day_posts.empty:
+        raise ValueError(f"No posts for {target_date}")
+
+    print(f"Input: {len(day_posts)} posts on {target_date}")
+
+    return predict_from_posts(day_posts)
