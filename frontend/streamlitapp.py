@@ -78,3 +78,11 @@ if dashboard == T["nav_user"]:
 
 else:
     dev.render(T)
+
+import requests
+import streamlit as st
+
+if st.query_params.get("health") == "1":
+    r = requests.get("http://127.0.0.1:8000/health")
+    st.json(r.json())
+    st.stop()
