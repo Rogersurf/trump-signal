@@ -11,7 +11,7 @@ from backend_database.init_db import DB_PATH
 from backend.model_predict import predict_from_posts, predict_latest, predict_for_date
 from backend.model_training import load_posts, MODEL_DIR
 
-app = FastAPI(title="Trump Geopolitical Rhetoric API", version="3.0")
+#app = FastAPI(title="Trump Geopolitical Rhetoric API", version="3.0")
 
 db_client = TrumpDataClient(DB_PATH)
 

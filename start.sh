@@ -31,6 +31,12 @@ if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
     exit 1
 fi
 
+echo "[DEBUG] Testing API..."
+curl http://127.0.0.1:8000/health || echo "API FAILED"
+
+echo "[DEBUG] CONFIG CONTENT:"
+cat frontend/config.py
+
 echo "[start.sh] Starting Streamlit..."
 streamlit run frontend/streamlitapp.py \
     --server.port 7860 \

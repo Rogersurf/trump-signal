@@ -13,7 +13,7 @@ from backend_database.data_api import DB_PATH
 from backend_database.data_api import TrumpDataClient
 
 router = APIRouter(
-    prefix="/rhetoric",    # path prefix all
+    prefix="",    # path prefix all
     tags=["Rhetoric"]      # categorize endpoints in docs
 )
 
@@ -31,6 +31,7 @@ def read_root():
         "engine": "SQLite Local Storage",
         "message": "API is running using the Local Data API."
     }
+
 
 
 @router.get("/stats")

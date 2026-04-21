@@ -315,3 +315,54 @@ def get_posts(start_date: str = None, end_date: str = None):
 
     except Exception as e:
         return {"error": str(e)}
+
+from backend.model_predict import predict_for_date
+from backend_database.data_api import TrumpDataClient
+
+@app.get("/model/predict/date/{date}")
+def predict_date(date: str):
+    try:
+        return predict_for_date(date)
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.get("/categories")
+def categories(period: str = "month", date_from: str = None, date_to: str = None):
+    try:
+        client = TrumpDataClient(DB_PATH)
+        df = client.get_full_data(date_from=date_from, date_to=date_to)
+
+        if df is None or df.empty:
+            return []
+
+        if "category" not in df.columns:
+            return []
+
+        result = df["category"].value_counts().reset_index()
+        result.columns = ["category", "count"]
+
+        return result.to_dict(orient="records")
+
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.get("/stocks")
+def stocks(index: str = "sp500", days: int = 30):
+    try:
+        import numpy as np
+        import pandas as pd
+        from datetime import datetime
+
+        dates = pd.date_range(end=datetime.today(), periods=days)
+
+        df = pd.DataFrame({
+            "date": dates.astype(str),
+            "price": np.random.rand(days) * 100,
+            "has_big_post": np.random.choice([True, False], days),
+            "pct_change": np.random.randn(days)
+        })
+
+        return df.to_dict(orient="records")
+
+    except Exception as e:
+        return {"error": str(e)}
