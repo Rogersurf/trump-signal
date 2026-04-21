@@ -319,11 +319,15 @@ def get_posts(start_date: str = None, end_date: str = None):
 from backend.model_predict import predict_for_date
 from backend_database.data_api import TrumpDataClient
 
+import traceback
+
 @app.get("/model/predict/date/{date}")
 def predict_date(date: str):
     try:
         return predict_for_date(date)
     except Exception as e:
+        print("🔥 PREDICT ERROR:", str(e))
+        traceback.print_exc()
         return {"error": str(e)}
 
 @app.get("/categories")

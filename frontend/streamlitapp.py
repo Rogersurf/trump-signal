@@ -7,6 +7,38 @@ import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import streamlit as st
+import requests
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 🔥 INTERNAL DEBUG ROUTES (HF WORKAROUND)
+# MUST BE BEFORE ANY UI RENDERING
+# ──────────────────────────────────────────────────────────────────────────────
+query_params = st.query_params
+
+# Health check
+if query_params.get("health") == "1":
+    try:
+        r = requests.get("http://127.0.0.1:8000/health", timeout=5)
+        st.json(r.json())
+    except Exception as e:
+        st.error(f"Health check failed: {e}")
+    st.stop()
+
+# Swagger Docs (REAL FIX)
+if query_params.get("docs") == "1":
+    st.title("FastAPI Docs")
+
+    st.components.v1.iframe(
+        "http://127.0.0.1:8000/docs",
+        height=900,
+        scrolling=True
+    )
+    st.stop()
+
+# ──────────────────────────────────────────────────────────────────────────────
+# NORMAL APP STARTS HERE
+# ──────────────────────────────────────────────────────────────────────────────
+
 from frontend.config import TIMEZONES, TRANSLATIONS
 from frontend._data.api_client import is_api_alive
 import frontend._pages.feed         as feed
@@ -27,7 +59,7 @@ st.set_page_config(
 with st.sidebar:
     st.markdown("## 📊 TrumpSignal")
 
-    T         = TRANSLATIONS["English"]
+    T = TRANSLATIONS["English"]
 
     tz_label  = st.selectbox(T["timezone"], list(TIMEZONES.keys()))
     tz_offset = TIMEZONES[tz_label]
@@ -42,19 +74,24 @@ with st.sidebar:
 
     st.divider()
 
-    # API status only — no empty nav items
-    api_ok = True
+    # API status
+    try:
+        api_ok = is_api_alive()
+    except:
+        api_ok = False
+
     if api_ok:
         st.success(T["api_online"], icon="✅")
     else:
         st.warning(T["api_offline"], icon="⚠️")
 
     st.caption("Posts: daily · Geopolitical: weekly")
+
     try:
-        import os
         version = open(os.path.join(os.path.dirname(__file__), "VERSION")).read().strip()
     except:
         version = "1.0.0"
+
     st.caption(f"v{version} — TrumpSignal")
 
 # ── Route ─────────────────────────────────────────────────────────────────────
@@ -78,11 +115,3 @@ if dashboard == T["nav_user"]:
 
 else:
     dev.render(T)
-
-import requests
-import streamlit as st
-
-if st.query_params.get("health") == "1":
-    r = requests.get("http://127.0.0.1:8000/health")
-    st.json(r.json())
-    st.stop()
