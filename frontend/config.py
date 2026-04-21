@@ -6,7 +6,7 @@ REPLACE: API_URL เมื่อ deploy ขึ้น cloud
 """
 
 
-AAPI_URL = "http://127.0.0.1:8000"
+API_URL = "http://127.0.0.1:8000"
 
 TIMEZONES = {
     "UTC":               0,
