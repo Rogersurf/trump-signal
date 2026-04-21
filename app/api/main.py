@@ -1,12 +1,31 @@
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
-import json
 
+import os
+import sqlite3
+import pandas as pd
+import numpy as np
+from datetime import datetime
+import traceback
+
+from backend_database.data_api import DB_PATH, TrumpDataClient
+from backend.model_predict import predict_for_date
 from app.services.model_service import run_prediction
 
+# ------------------------------------------------------------------------------
+# APP INIT
+# ------------------------------------------------------------------------------
 app = FastAPI()
 
+# Mock flags (evita crash se não existir engine ainda)
+_index_ready = True
+_index_building = False
+_engine = True
 
+
+# ------------------------------------------------------------------------------
+# HEALTH
+# ------------------------------------------------------------------------------
 @app.get("/health")
 def health():
     return {
@@ -18,7 +37,17 @@ def health():
     }
 
 
-<<<<<<< HEAD
+# ------------------------------------------------------------------------------
+# PREDICT (GLOBAL)
+# ------------------------------------------------------------------------------
+@app.get("/predict")
+def predict():
+    try:
+        return run_prediction()
+    except Exception as e:
+        return {"error": str(e)}
+
+
 # ------------------------------------------------------------------------------
 # MAX DATE
 # ------------------------------------------------------------------------------
@@ -63,13 +92,9 @@ def available_dates():
 @app.get("/gdelt/range")
 def gdelt_range(start: str, end: str):
     try:
-        from backend_database.data_api import TrumpDataClient
-
         client = TrumpDataClient(DB_PATH)
         df = client.get_gdelt_trend(start, end)
-
         return df.to_dict(orient="records")
-
     except Exception as e:
         return {"error": str(e)}
 
@@ -82,8 +107,6 @@ def gdelt_summary(start: str, end: str):
 @app.get("/gdelt")
 def gdelt():
     try:
-        from backend_database.data_api import TrumpDataClient
-
         client = TrumpDataClient(DB_PATH)
 
         end = datetime.now()
@@ -103,8 +126,6 @@ def gdelt():
 @app.get("/gdelt/timeseries")
 def gdelt_timeseries(weeks: int = 8):
     try:
-        from backend_database.data_api import TrumpDataClient
-
         client = TrumpDataClient(DB_PATH)
 
         end = datetime.now()
@@ -137,8 +158,6 @@ def gdelt_timeseries(weeks: int = 8):
 @app.get("/posts")
 def get_posts(start_date: str = None, end_date: str = None):
     try:
-        from backend_database.data_api import TrumpDataClient
-
         print(f"[POSTS] start={start_date} end={end_date}")
 
         if start_date is None and end_date is None:
@@ -161,11 +180,10 @@ def get_posts(start_date: str = None, end_date: str = None):
     except Exception as e:
         return {"error": str(e)}
 
-from backend.model_predict import predict_for_date
-from backend_database.data_api import TrumpDataClient
 
-import traceback
-
+# ------------------------------------------------------------------------------
+# MODEL PREDICT BY DATE
+# ------------------------------------------------------------------------------
 @app.get("/model/predict/date/{date}")
 def predict_date(date: str):
     try:
@@ -175,6 +193,10 @@ def predict_date(date: str):
         traceback.print_exc()
         return {"error": str(e)}
 
+
+# ------------------------------------------------------------------------------
+# CATEGORIES
+# ------------------------------------------------------------------------------
 @app.get("/categories")
 def categories(period: str = "month", date_from: str = None, date_to: str = None):
     try:
@@ -195,13 +217,13 @@ def categories(period: str = "month", date_from: str = None, date_to: str = None
     except Exception as e:
         return {"error": str(e)}
 
+
+# ------------------------------------------------------------------------------
+# STOCKS (MOCK)
+# ------------------------------------------------------------------------------
 @app.get("/stocks")
 def stocks(index: str = "sp500", days: int = 30):
     try:
-        import numpy as np
-        import pandas as pd
-        from datetime import datetime
-
         dates = pd.date_range(end=datetime.today(), periods=days)
 
         df = pd.DataFrame({
@@ -215,8 +237,3 @@ def stocks(index: str = "sp500", days: int = 30):
 
     except Exception as e:
         return {"error": str(e)}
-=======
-@app.get("/predict")
-def predict():
-    return run_prediction()
->>>>>>> backup/stable-working
