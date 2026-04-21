@@ -85,24 +85,34 @@ LEAKAGE_COLS = {
 # ─────────────────────────────────────────────
 def load_posts() -> tuple[pd.DataFrame, list, list]:
     import sqlite3
-    import os
     
-    # Determine database path based on environment
+    # ------------------------------------------------------------------
+    # DB CONNECTION
+    # ------------------------------------------------------------------
     db_path = DB_PATH
     print(f"[DB DEBUG] Using DB_PATH: {db_path}")
 
     conn = sqlite3.connect(db_path)
-    cur      = conn.execute(f"PRAGMA table_info({TABLE_NAME})")
+
+    # ------------------------------------------------------------------
+    # GET ALL COLUMNS FROM DB
+    # ------------------------------------------------------------------
+    cur = conn.execute(f"PRAGMA table_info({TABLE_NAME})")
     all_cols = [r[1] for r in cur.fetchall()]
 
+    # ------------------------------------------------------------------
+    # BUILD COLUMN GROUPS
+    # ------------------------------------------------------------------
     ticker_suffixes = [
         "_open", "_close", "_1hr_before", "_5min_before",
         "_at_post", "_5min_after", "_1hr_after",
     ]
+
     ticker_cols = [
         c for c in all_cols
         if any(c == f"{t}{s}" for t in TICKERS for s in ticker_suffixes)
     ]
+
     cat_cols   = [c for c in all_cols if c in CAT_COLS]
     gdelt_cols = [c for c in all_cols if c in GDELT_COLS]
 
@@ -113,46 +123,90 @@ def load_posts() -> tuple[pd.DataFrame, list, list]:
         "during_market_hours", "market_period",
         "has_media", "sp500_resolution",
     ]
-    base_cols   = [c for c in base_cols if c in all_cols]
-    
+
+    base_cols = [c for c in base_cols if c in all_cols]
+
+    # ------------------------------------------------------------------
+    # DEBUG (KEEP THIS)
+    # ------------------------------------------------------------------
     print("DEBUG all_cols:", all_cols)
     print("DEBUG base_cols:", base_cols)
     print("DEBUG ticker_cols:", ticker_cols)
     print("DEBUG cat_cols:", cat_cols)
     print("DEBUG gdelt_cols:", gdelt_cols)
-    select_cols = base_cols + ticker_cols + cat_cols + gdelt_cols
 
-    if not select_cols:
-        print("⚠️ WARNING: select_cols vazio — fallback para SELECT *")
-        query = f"SELECT * FROM {TABLE_NAME}"
-    else:
-        query = f"SELECT {', '.join(select_cols)} FROM {TABLE_NAME}"
-
-    df = pd.read_sql(query, conn)
-
-    df = pd.read_sql(f"SELECT {', '.join(select_cols)} FROM {TABLE_NAME}", conn)
+    # ------------------------------------------------------------------
+    # LOAD FULL TABLE (NO DYNAMIC SQL — CRITICAL)
+    # ------------------------------------------------------------------
+    df = pd.read_sql(f"SELECT * FROM {TABLE_NAME}", conn)
     conn.close()
 
-    df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce", utc=True)
-    df["date"]     = pd.to_datetime(df["date"],     errors="coerce").dt.normalize()
+    # ------------------------------------------------------------------
+    # SAFE COLUMN SELECTION (DONE IN PANDAS)
+    # ------------------------------------------------------------------
+    select_cols = [
+        c for c in (base_cols + ticker_cols + cat_cols + gdelt_cols)
+        if c in df.columns
+    ]
 
+    if not select_cols:
+        raise ValueError("CRITICAL: select_cols is EMPTY — pipeline broken")
+
+    df = df[select_cols]
+
+    # ------------------------------------------------------------------
+    # DATETIME PROCESSING
+    # ------------------------------------------------------------------
+    if "datetime" not in df.columns:
+        raise ValueError("CRITICAL: 'datetime' column missing from dataset")
+
+    df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce", utc=True)
+
+    if "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.normalize()
+
+    # ------------------------------------------------------------------
+    # BOOLEAN NORMALIZATION
+    # ------------------------------------------------------------------
     for bc in ["during_market_hours", "is_president", "is_president_elect", "has_media"]:
         if bc in df.columns:
             df[bc] = df[bc].astype(float).fillna(0) == 1.0
 
-    skip     = {"sp500_resolution"} | LEAKAGE_COLS
-    num_cols = [c for c in ticker_cols + cat_cols + gdelt_cols if c not in skip]
-    for c in num_cols:
-        if c in df.columns:
-            df[c] = pd.to_numeric(df[c], errors="coerce")
+    # ------------------------------------------------------------------
+    # NUMERIC CLEANING
+    # ------------------------------------------------------------------
+    skip = {"sp500_resolution"} | LEAKAGE_COLS
 
-    df["content"] = df["text"].fillna("").astype(str)
+    num_cols = [
+        c for c in (ticker_cols + cat_cols + gdelt_cols)
+        if c not in skip and c in df.columns
+    ]
+
+    for c in num_cols:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+
+    # ------------------------------------------------------------------
+    # TEXT FIELD
+    # ------------------------------------------------------------------
+    if "text" in df.columns:
+        df["content"] = df["text"].fillna("").astype(str)
+    else:
+        df["content"] = ""
+
+    # ------------------------------------------------------------------
+    # FINAL CLEAN
+    # ------------------------------------------------------------------
     df = df.dropna(subset=["datetime"]).reset_index(drop=True)
 
-    print(f"      {len(df):,} posts  |  "
-          f"{len(ticker_cols)} ticker cols  |  "
-          f"{len(cat_cols)} cat cols  |  "
-          f"{len(gdelt_cols)} gdelt cols")
+    # ------------------------------------------------------------------
+    # LOG SUMMARY
+    # ------------------------------------------------------------------
+    print(
+        f"      {len(df):,} posts  |  "
+        f"{len(ticker_cols)} ticker cols  |  "
+        f"{len(cat_cols)} cat cols  |  "
+        f"{len(gdelt_cols)} gdelt cols"
+    )
 
     return df, cat_cols, gdelt_cols
 
