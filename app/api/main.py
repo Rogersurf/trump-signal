@@ -8,6 +8,7 @@ import os
 
 from backend_database.data_api import TrumpDataClient
 from backend.model_predict import predict_for_date
+from backend.model_training import load_posts
 
 app = FastAPI()
 
@@ -111,38 +112,44 @@ def categories(date_from: str = None, date_to: str = None):
 # CATEGORY IMPACT (NEW)
 # ------------------------------------------------------------------------------
 @app.get("/categories/impact")
-def category_impact(start: str, end: str):
-    try:
-        client = TrumpDataClient(DB_PATH)
-        df = client.get_full_data(start, end)
+def get_category_impact(start: str, end: str):
+    import pandas as pd
 
-        if df is None or df.empty:
-            return []
+    df, cat_cols, _ = load_posts()
 
-        cat_cols = [c for c in df.columns if c.startswith("cat_")]
+    start = pd.to_datetime(start)
+    end = pd.to_datetime(end)
 
-        results = []
+    df = df[(df["date"] >= start) & (df["date"] <= end)].copy()
 
-        for col in cat_cols:
-            sub = df[df[col] == 1]
+    if df.empty:
+        return []
 
-            if sub.empty:
-                continue
+    # 🔥 CREATE IMPACT (YOU LOST THIS)
+    if "sp500_close" in df.columns and "sp500_open" in df.columns:
+        df["impact"] = (df["sp500_close"] - df["sp500_open"]).fillna(0)
+    else:
+        return []
 
-            if "sp500_5min_after" not in sub.columns:
-                continue
+    results = []
 
-            avg = sub["sp500_5min_after"].astype(float).mean()
+    for cat in cat_cols:
+        if cat not in df.columns:
+            continue
 
-            results.append({
-                "category": col.replace("cat_", ""),
-                "avg_move": float(avg)
-            })
+        subset = df[df[cat] > 0.5]
 
-        return results
+        if subset.empty:
+            continue
 
-    except Exception as e:
-        return {"error": str(e)}
+        avg_impact = subset["impact"].mean()
+
+        results.append({
+            "category": cat.replace("cat_", ""),
+            "avg_impact": float(avg_impact)
+        })
+
+    return results
 
 # ------------------------------------------------------------------------------
 # GDELT (FIXED)
