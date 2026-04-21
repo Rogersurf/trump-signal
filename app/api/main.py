@@ -156,11 +156,15 @@ def gdelt_range(start: str, end: str):
         if df is None or df.empty:
             return []
 
-        df = df.fillna(0)
+        import numpy as np
+
+        df = df.replace([np.inf, -np.inf], np.nan)
+        df = df.replace({np.nan: None})
 
         return df.to_dict(orient="records")
 
     except Exception as e:
+        print("ERROR:", e)  # 👈 IMPORTANTE
         return {"error": str(e)}
 
 @app.get("/gdelt/summary")
