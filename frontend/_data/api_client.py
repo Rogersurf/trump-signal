@@ -89,18 +89,23 @@ def get_category_summary(period: str = "month", date_from: str = None, date_to: 
         params["date_to"] = date_to
     try:
         r = requests.get(f"{API_URL}/categories", params=params, timeout=10)
-        if r.status_code == 200:
-            data = r.json()
-            if data:
-                return pd.DataFrame(data)
         
+        if r.status_code != 200:
+            return pd.DataFrame()
+
+        data = r.json()
+
         if isinstance(data, dict):
             if "error" in data:
                 return pd.DataFrame()
             data = [data]
-        
+
+        if data:
+            return pd.DataFrame(data)
+
     except Exception as e:
         print(f"[api_client] get_category_summary error: {e}")
+
     return pd.DataFrame(columns=["category", "count"])
 
 
