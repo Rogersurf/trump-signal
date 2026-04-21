@@ -88,14 +88,7 @@ def load_posts() -> tuple[pd.DataFrame, list, list]:
     import os
     
     # Determine database path based on environment
-    hf_db_path = "/data/trump_data.db"
-    local_db_path = "./trump_data.db"
-
-    if os.path.isfile(hf_db_path):
-        db_path = hf_db_path
-    else:
-        db_path = local_db_path
-
+    db_path = DB_PATH
     print(f"[DB DEBUG] Using DB_PATH: {db_path}")
 
     conn = sqlite3.connect(db_path)
