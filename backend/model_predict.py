@@ -1,3 +1,18 @@
+import json
+import warnings
+from pathlib import Path
+
+import joblib
+import numpy as np
+import pandas as pd   # ← THIS MUST BE HERE
+
+from backend.model_training import (
+    MODEL_DIR,
+    CAT_COLS,
+    GDELT_COLS,
+    aggregate_daily,
+    load_posts,
+)
 def predict_from_posts(posts: pd.DataFrame) -> pd.DataFrame:
     """
     Aggregate posts to daily level and predict next-day market impact.
