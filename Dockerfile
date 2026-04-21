@@ -17,6 +17,10 @@ RUN mkdir -p $TRUMPPULSE_DATA_DIR $CHROMA_DB_PATH
 
 # Python dependencies
 COPY requirements.txt .
+# Install CPU-only torch FIRST
+RUN pip install --no-cache-dir torch==2.2.0 --index-url https://download.pytorch.org/whl/cpu
+
+# Then install the rest
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy project
