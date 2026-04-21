@@ -71,8 +71,3 @@ tests/chroma_db/
 # Testing
 # ==============================
 .pytest_cache/
-
-# ==============================
-# Model artifacts
-# ==============================
-backend/model_artifacts/
