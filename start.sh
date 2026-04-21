@@ -1,34 +1,39 @@
 #!/bin/bash
 set -e
 
-echo "[start.sh] Preparing environment..."
+echo "[start.sh] Downloading latest artifacts..."
 
-# Ensure DB folder exists
-mkdir -p /data/trump_pulse
+# Clean old
+rm -f /data/trump_pulse/trump_data.db
 
-# Download DB if not exists
-if [ ! -f /data/trump_pulse/trump_data.db ]; then
-    echo "[start.sh] Downloading DB..."
-    wget -O /data/trump_pulse/trump_data.db \
-    https://huggingface.co/datasets/Rogersurf/trump-signal-data/resolve/main/trump_data.db
-fi
+# DB
+wget -O /data/trump_pulse/trump_data.db \
+https://huggingface.co/datasets/Rogersurf/trump-signal-data/resolve/main/trump_data.db
 
-export DB_PATH=/data/trump_pulse/trump_data.db
+# Model artifacts
+mkdir -p /app/backend/model_artifacts
+
+wget -O /app/backend/model_artifacts/xgb_model.pkl \
+https://huggingface.co/datasets/Rogersurf/trump-signal-data/resolve/main/xgb_model.pkl
+
+wget -O /app/backend/model_artifacts/scaler.pkl \
+https://huggingface.co/datasets/Rogersurf/trump-signal-data/resolve/main/scaler.pkl
+
+wget -O /app/backend/model_artifacts/feature_cols.json \
+https://huggingface.co/datasets/Rogersurf/trump-signal-data/resolve/main/feature_cols.json
 
 echo "[start.sh] Starting FastAPI..."
 
-# 🚀 START API (isso faltava)
 uvicorn app.api.main:app --host 0.0.0.0 --port 8000 &
 
 echo "[start.sh] Waiting for API..."
 
 for i in {1..30}; do
-    sleep 2
-    if curl -s http://127.0.0.1:8000/health > /dev/null; then
-        echo "[start.sh] API ready!"
-        break
-    fi
-    echo "[start.sh] retry $i/30"
+  if curl -s http://127.0.0.1:8000/health > /dev/null; then
+    echo "[start.sh] API ready!"
+    break
+  fi
+  sleep 2
 done
 
 echo "[start.sh] Starting Streamlit..."

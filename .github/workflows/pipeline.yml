@@ -1,0 +1,50 @@
+name: Daily ML Pipeline
+
+on:
+  schedule:
+    - cron: "0 2 * * *"   # TODO dia 02:00 UTC
+  workflow_dispatch:
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: |
+          pip install -r requirements.txt
+          pip install huggingface_hub
+
+      # ─────────────────────────────
+      # 1. UPDATE DATABASE
+      # ─────────────────────────────
+      - name: Update DB
+        run: |
+          python backend_database/update_db.py
+
+      # ─────────────────────────────
+      # 2. TRAIN MODEL
+      # ─────────────────────────────
+      - name: Train model
+        run: |
+          python backend/model_training.py \
+            --data-dir ./data \
+            --db-path ./trump_data.db \
+            --chroma-db-path ./chroma_db
+
+      # ─────────────────────────────
+      # 3. PUSH TO HF DATASET
+      # ─────────────────────────────
+      - name: Upload artifacts to HF
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          python scripts/push_to_hf.py
