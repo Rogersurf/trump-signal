@@ -1,168 +1,12 @@
-"""FastAPI application for TrumpPulse (FULL version, production-ready)."""
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse
+import json
 
-# ------------------------------------------------------------------------------
-# IMPORTS
-# ------------------------------------------------------------------------------
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from app.services.model_service import run_prediction
 
-import sqlite3
-from datetime import datetime, timezone
-import threading
-import time
-import os
-import sys
-
-import pandas as pd
-import numpy as np
-
-# ------------------------------------------------------------------------------
-# Fix Python path (Docker / HF Spaces)
-# ------------------------------------------------------------------------------
-sys.path.insert(
-    0,
-    os.path.dirname(
-        os.path.dirname(
-            os.path.dirname(os.path.abspath(__file__))
-        )
-    )
-)
-
-# ------------------------------------------------------------------------------
-# SINGLE SOURCE OF TRUTH FOR DB
-# ------------------------------------------------------------------------------
-from backend_database.data_api import DB_PATH
-print(f"[CONFIG] Using database at: {DB_PATH}")
-
-# ------------------------------------------------------------------------------
-# Imports internos
-# ------------------------------------------------------------------------------
-from backend_database.embeddings import get_search_engine
-from app.api.soy_trump_rhetoric import router as rhetoric_router
-from app.api import monitoring
-
-# ------------------------------------------------------------------------------
-# APP
-# ------------------------------------------------------------------------------
 app = FastAPI()
 
-app.include_router(rhetoric_router)
-app.include_router(monitoring.router)
 
-# ------------------------------------------------------------------------------
-# ENGINE STATE (EXPLÍCITO)
-# ------------------------------------------------------------------------------
-_engine = None
-_index_ready = False
-_index_building = False
-_engine_started = False
-
-# ------------------------------------------------------------------------------
-# ENGINE INITIALIZATION (VERBOSE)
-# ------------------------------------------------------------------------------
-def _initialize_engine():
-    global _engine, _index_ready, _index_building
-
-    retries = 5
-    delay = 3
-
-    print("[STARTUP] Engine initialization started")
-
-    for attempt in range(retries):
-
-        print(f"[STARTUP] Attempt {attempt + 1}/{retries}")
-
-        _index_building = True
-        _index_ready = False
-
-        try:
-            print(f"[STARTUP] Loading engine from DB: {DB_PATH}")
-
-            engine = get_search_engine(DB_PATH)
-
-            # ---------------- VALIDATION ----------------
-            if engine is None:
-                raise Exception("Engine is None")
-
-            if not hasattr(engine, "embeddings"):
-                raise Exception("Missing embeddings")
-
-            if engine.embeddings is None:
-                raise Exception("Embeddings not loaded")
-
-            if not hasattr(engine, "posts"):
-                raise Exception("Missing posts")
-
-            if len(engine.posts) == 0:
-                raise Exception("No posts loaded")
-
-            # ---------------- SUCCESS ----------------
-            _engine = engine
-            _index_ready = True
-            _index_building = False
-
-            print(f"[STARTUP] SUCCESS: {len(engine.posts)} posts loaded")
-
-            return
-
-        except Exception as e:
-            print(f"[STARTUP] ERROR: {e}")
-
-            _index_ready = False
-            _index_building = True
-
-            if attempt < retries - 1:
-                print(f"[STARTUP] Retrying in {delay}s...")
-                time.sleep(delay)
-
-    print("[STARTUP] FAILED after retries")
-
-    _engine = None
-    _index_ready = False
-    _index_building = False
-
-
-def get_engine():
-    if _index_building:
-        print("[ENGINE] Requested while building")
-        return None
-
-    if not _index_ready:
-        print("[ENGINE] Requested but not ready")
-        return None
-
-    if _engine is None:
-        print("[ENGINE] Unexpected None")
-        return None
-
-    return _engine
-
-
-# ------------------------------------------------------------------------------
-# STARTUP THREAD CONTROL
-# ------------------------------------------------------------------------------
-@app.on_event("startup")
-def startup_event():
-    global _engine_started
-
-    if _engine_started:
-        print("[STARTUP] Engine already started")
-        return
-
-    print("[STARTUP] Starting engine thread")
-
-    _engine_started = True
-
-    thread = threading.Thread(
-        target=_initialize_engine,
-        daemon=True
-    )
-    thread.start()
-
-
-# ------------------------------------------------------------------------------
-# HEALTH
-# ------------------------------------------------------------------------------
 @app.get("/health")
 def health():
     return {
@@ -174,6 +18,7 @@ def health():
     }
 
 
+<<<<<<< HEAD
 # ------------------------------------------------------------------------------
 # MAX DATE
 # ------------------------------------------------------------------------------
@@ -370,3 +215,8 @@ def stocks(index: str = "sp500", days: int = 30):
 
     except Exception as e:
         return {"error": str(e)}
+=======
+@app.get("/predict")
+def predict():
+    return run_prediction()
+>>>>>>> backup/stable-working

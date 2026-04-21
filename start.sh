@@ -1,14 +1,14 @@
 #!/bin/bash
 set -e
 
-# Activate virtual environment if it exists (local development)
-if [ -d "venv" ]; then
-    echo "[start.sh] Activating virtual environment..."
-    source venv/bin/activate
+echo "[start.sh] Downloading database if needed..."
+
+# Download DB from HF dataset if not present
+if [ ! -f trump_data.db ]; then
+    wget https://huggingface.co/datasets/Rogersurf/trump-signal-data/resolve/main/trump_data.db
 fi
 
 echo "[start.sh] Starting FastAPI..."
-uvicorn app.api.main:app --host 0.0.0.0 --port 8000 &
 
 # Wait for API to be ready
 echo "[start.sh] Waiting for API to be ready..."
@@ -41,3 +41,6 @@ echo "[start.sh] Starting Streamlit..."
 streamlit run frontend/streamlitapp.py \
     --server.port 7860 \
     --server.address 0.0.0.0
+=======
+uvicorn app.api.main:app --host 0.0.0.0 --port 7860
+>>>>>>> backup/stable-working

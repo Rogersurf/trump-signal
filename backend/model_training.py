@@ -85,9 +85,20 @@ LEAKAGE_COLS = {
 # ─────────────────────────────────────────────
 def load_posts() -> tuple[pd.DataFrame, list, list]:
     import sqlite3
+    import os
+    
+    # Determine database path based on environment
+    hf_db_path = "/data/trump_data.db"
+    local_db_path = "./trump_data.db"
 
-    print(f"[DB] Using DB_PATH: {DB_PATH}")
-    conn     = sqlite3.connect(DB_PATH)
+    if os.path.isfile(hf_db_path):
+        db_path = hf_db_path
+    else:
+        db_path = local_db_path
+
+    print(f"[DB DEBUG] Using DB_PATH: {db_path}")
+
+    conn = sqlite3.connect(db_path)
     cur      = conn.execute(f"PRAGMA table_info({TABLE_NAME})")
     all_cols = [r[1] for r in cur.fetchall()]
 
@@ -110,7 +121,21 @@ def load_posts() -> tuple[pd.DataFrame, list, list]:
         "has_media", "sp500_resolution",
     ]
     base_cols   = [c for c in base_cols if c in all_cols]
+    
+    print("DEBUG all_cols:", all_cols)
+    print("DEBUG base_cols:", base_cols)
+    print("DEBUG ticker_cols:", ticker_cols)
+    print("DEBUG cat_cols:", cat_cols)
+    print("DEBUG gdelt_cols:", gdelt_cols)
     select_cols = base_cols + ticker_cols + cat_cols + gdelt_cols
+
+    if not select_cols:
+        print("⚠️ WARNING: select_cols vazio — fallback para SELECT *")
+        query = f"SELECT * FROM {TABLE_NAME}"
+    else:
+        query = f"SELECT {', '.join(select_cols)} FROM {TABLE_NAME}"
+
+    df = pd.read_sql(query, conn)
 
     df = pd.read_sql(f"SELECT {', '.join(select_cols)} FROM {TABLE_NAME}", conn)
     conn.close()

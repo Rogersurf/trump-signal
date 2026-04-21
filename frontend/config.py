@@ -4,9 +4,12 @@ config.py
 ค่า config ทั้งหมดอยู่ที่นี่
 REPLACE: API_URL เมื่อ deploy ขึ้น cloud
 """
+import requests
 
+API = "https://rogersurf-trump-signal-api-v2.hf.space"
 
-API_URL = "http://127.0.0.1:8000"
+data = requests.get(f"{API}/predict/latest").json()
+>>>>>>> backup/stable-working
 
 TIMEZONES = {
     "UTC":               0,
