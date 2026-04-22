@@ -24,15 +24,20 @@ def get_db_path():
     return os.path.abspath("trump_data.db")
 
 
-# Global constant (optional, but consistent)
+def get_db_path():
+    base = os.environ.get("TRUMPPULSE_DATA_DIR")
+
+    if base:
+        path = os.path.join(base, "trump_data.db")
+    else:
+        path = os.path.abspath("backend_database/trump_data.db")
+
+    print(f"[DB DEBUG] Using DB_PATH: {path}")  # 🔥 debug real
+
+    return path
+
+
 DB_PATH = get_db_path()
-
-DB_PATH = os.environ.get(
-    "TRUMPPULSE_DATA_DIR",
-    "."
-)
-
-DB_PATH = os.path.join(DB_PATH, "trump_data.db")
 
 class TrumpDataClient:
     def __init__(self, db_path=DEFAULT_DB_PATH):

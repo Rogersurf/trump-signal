@@ -291,3 +291,32 @@ def stocks(index: str = "sp500", days: int = 30):
 
     except Exception as e:
         return {"error": str(e)}
+
+from fastapi import APIRouter, Query
+from backend_database.data_api import TrumpDataClient
+
+router = APIRouter()
+client = TrumpDataClient()
+
+@router.get("/categories")
+def get_categories(
+    period: str = Query("year"),
+    date_from: str = Query(None),
+    date_to: str = Query(None),
+):
+    try:
+        df = client.get_category_ratio(start=date_from, end=date_to)
+
+        # 🔥 FORMATAR PRO FRONTEND
+        result = [
+            {
+                "category": row["category"],
+                "count": float(row["ratio_pct"])  # frontend espera "count"
+            }
+            for _, row in df.iterrows()
+        ]
+
+        return result
+
+    except Exception as e:
+        return {"error": str(e)}
