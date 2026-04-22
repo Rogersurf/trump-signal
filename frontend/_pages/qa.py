@@ -84,25 +84,38 @@ def render(T: dict):
 
                 with st.expander("📊 Market impact — all stocks"):
                     for key, label in STOCKS.items():
-                        before = post.get(f"{key}_5min_before", None)
-                        after  = post.get(f"{key}_5min_after", None)
+                        before = post.get(f"{key}_5min_before")
+                        after  = post.get(f"{key}_5min_after")
+
+                        # 🔥 SAFE CHECK (THIS FIXES YOUR BUG)
+                        if before is None or after is None:
+                            st.markdown(
+                                f'<span style="display:inline-block;width:160px;color:#888;font-size:12px">{label}</span>'
+                                f'<span style="color:#ccc;font-size:12px">N/A</span>',
+                                unsafe_allow_html=True,
+                            )
+                            continue
+
                         try:
                             b = float(before)
                             a = float(after)
-                            chg = round((a - b) / b * 100, 2) if b != 0 else 0
+
+                            if b == 0:
+                                raise ValueError("zero division")
+
+                            chg = round((a - b) / b * 100, 2)
                             chg_str = f"+{chg:.2f}%" if chg >= 0 else f"{chg:.2f}%"
                             color = "#1D9E75" if chg >= 0 else "#E24B4A"
+
                             st.markdown(
-                                f'<span style="display:inline-block;width:160px;'
-                                f'color:#888;font-size:12px">{label}</span>'
-                                f'<span style="font-weight:700;font-size:13px;'
-                                f'color:{color}">{chg_str}</span>',
+                                f'<span style="display:inline-block;width:160px;color:#888;font-size:12px">{label}</span>'
+                                f'<span style="font-weight:700;font-size:13px;color:{color}">{chg_str}</span>',
                                 unsafe_allow_html=True,
                             )
-                        except:
+
+                        except Exception:
                             st.markdown(
-                                f'<span style="display:inline-block;width:160px;'
-                                f'color:#888;font-size:12px">{label}</span>'
+                                f'<span style="display:inline-block;width:160px;color:#888;font-size:12px">{label}</span>'
                                 f'<span style="color:#ccc;font-size:12px">N/A</span>',
                                 unsafe_allow_html=True,
                             )
