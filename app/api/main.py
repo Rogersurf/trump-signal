@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 import sqlite3
 import pandas as pd
 import numpy as np
@@ -21,7 +21,8 @@ DB_PATH = os.environ.get("DB_PATH", "/data/trump_pulse/trump_data.db")
 def health():
     return {
         "status": "ok",
-        "db_exists": os.path.exists(DB_PATH)
+        "db_exists": os.path.exists(DB_PATH),
+        "db_path": DB_PATH
     }
 
 # ------------------------------------------------------------------------------
@@ -38,21 +39,6 @@ def max_date():
             return {"max_date": datetime.today().strftime("%Y-%m-%d")}
 
         return {"max_date": date}
-
-    except Exception as e:
-        return {"error": str(e)}
-
-# ------------------------------------------------------------------------------
-# AVAILABLE DATES
-# ------------------------------------------------------------------------------
-@app.get("/data/available_dates")
-def available_dates():
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        df = pd.read_sql("SELECT DISTINCT date FROM truth_social ORDER BY date", conn)
-        conn.close()
-
-        return df["date"].tolist()
 
     except Exception as e:
         return {"error": str(e)}
@@ -80,83 +66,96 @@ def get_posts(start_date: str = None, end_date: str = None):
         return {"error": str(e)}
 
 # ------------------------------------------------------------------------------
-# CATEGORIES (FIXED)
+# 🔥 FIXED CATEGORIES (THIS IS YOUR BUG)
 # ------------------------------------------------------------------------------
 @app.get("/categories")
 def categories(date_from: str = None, date_to: str = None):
     try:
-        client = TrumpDataClient(DB_PATH)
-        df = client.get_full_data(
-            date_from=date_from,
-            date_to=date_to,
-            market_hours_only=False
-        )
+        # 🔥 BYPASS data_api completely
+        conn = sqlite3.connect(DB_PATH)
 
-        if df is None or df.empty:
+        query = "SELECT * FROM truth_social WHERE 1=1"
+
+        if date_from:
+            query += f" AND DATE(date) >= '{date_from}'"
+        if date_to:
+            query += f" AND DATE(date) <= '{date_to}'"
+
+        df = pd.read_sql(query, conn)
+        conn.close()
+
+        if df.empty:
+            print("⚠️ EMPTY RAW DATA")
             return []
 
         cat_cols = [c for c in df.columns if c.startswith("cat_")]
 
         if not cat_cols:
+            print("⚠️ NO CATEGORY COLUMNS")
             return []
 
-        # Derive category
+        # 🔥 FORCE numeric
+        df[cat_cols] = df[cat_cols].apply(pd.to_numeric, errors="coerce").fillna(0)
+
+        # 🔥 KEEP ONLY rows with signal
+        df = df[df[cat_cols].sum(axis=1) > 0]
+
+        if df.empty:
+            print("⚠️ ALL CATEGORY VALUES ZERO AFTER FILTER")
+            return []
+
+        # dominant category
         df["category"] = df[cat_cols].idxmax(axis=1)
         df["category"] = df["category"].str.replace("cat_", "")
 
         result = df["category"].value_counts().reset_index()
         result.columns = ["category", "count"]
 
+        print("✅ FINAL CATEGORY OUTPUT:", result.head())
+
         return result.to_dict(orient="records")
 
     except Exception as e:
+        print("🔥 CATEGORY ERROR:", e)
+        traceback.print_exc()
         return {"error": str(e)}
+# ------------------------------------------------------------------------------
+# MODEL
+# ------------------------------------------------------------------------------
+@app.get("/model/predict/date/{date}")
+def predict_date(date: str):
+    try:
+        df = predict_for_date(date)
+
+        if df is None or len(df) == 0:
+            return {
+                "status": "no_data",
+                "date": date,
+                "data": []
+            }
+
+        df = df.copy()
+
+        for col in df.columns:
+            if pd.api.types.is_integer_dtype(df[col]):
+                df[col] = df[col].astype(int)
+            elif pd.api.types.is_float_dtype(df[col]):
+                df[col] = df[col].astype(float)
+            elif pd.api.types.is_datetime64_any_dtype(df[col]):
+                df[col] = df[col].astype(str)
+
+        return {
+            "status": "ok",
+            "data": df.to_dict(orient="records")
+        }
+
+    except Exception as e:
+        print("🔥 PREDICT ERROR:", str(e))
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ------------------------------------------------------------------------------
-# CATEGORY IMPACT (NEW)
-# ------------------------------------------------------------------------------
-@app.get("/categories/impact")
-def get_category_impact(start: str, end: str):
-    import pandas as pd
-
-    df, cat_cols, _ = load_posts()
-
-    start = pd.to_datetime(start)
-    end = pd.to_datetime(end)
-
-    df = df[(df["date"] >= start) & (df["date"] <= end)].copy()
-
-    if df.empty:
-        return []
-
-    # 🔥 CREATE IMPACT (YOU LOST THIS)
-    if "sp500_close" in df.columns and "sp500_open" in df.columns:
-        df["impact"] = (df["sp500_close"] - df["sp500_open"]).fillna(0)
-    else:
-        return []
-
-    results = []
-
-    for cat in cat_cols:
-        if cat not in df.columns:
-            continue
-
-        subset = df[df[cat] > 0.5]
-
-        if subset.empty:
-            continue
-
-        avg_impact = subset["impact"].mean()
-
-        results.append({
-            "category": cat.replace("cat_", ""),
-            "avg_impact": float(avg_impact)
-        })
-
-    return results
-
-# ------------------------------------------------------------------------------
-# GDELT (FIXED)
+# GDELT
 # ------------------------------------------------------------------------------
 @app.get("/gdelt/range")
 def gdelt_range(start: str, end: str):
@@ -167,117 +166,16 @@ def gdelt_range(start: str, end: str):
         if df is None or df.empty:
             return []
 
-        import numpy as np
-
         df = df.replace([np.inf, -np.inf], np.nan)
         df = df.replace({np.nan: None})
 
         return df.to_dict(orient="records")
 
     except Exception as e:
-        print("ERROR:", e)  # 👈 IMPORTANTE
-        return {"error": str(e)}
-
-@app.get("/gdelt/summary")
-def gdelt_summary(start: str, end: str):
-    return gdelt_range(start, end)
-
-@app.get("/gdelt/timeseries")
-def gdelt_timeseries(weeks: int = 8):
-    try:
-        client = TrumpDataClient(DB_PATH)
-
-        end = datetime.now()
-        start = end - pd.Timedelta(weeks=weeks)
-
-        df = client.get_gdelt_trend(
-            start.strftime("%Y-%m-%d"),
-            end.strftime("%Y-%m-%d")
-        )
-
-        if df is None or df.empty:
-            return []
-
-        df = df.fillna(0)
-
-        df["week"] = pd.to_datetime(df["date"]).dt.to_period("W").astype(str)
-
-        agg = df.groupby("week").agg({
-            "gdelt_avg_tone": "mean",
-            "gdelt_verbal_conflict": "mean"
-        }).reset_index()
-
-        return agg.to_dict(orient="records")
-
-    except Exception as e:
         return {"error": str(e)}
 
 # ------------------------------------------------------------------------------
-# MODEL
-# ------------------------------------------------------------------------------
-from fastapi import HTTPException
-import pandas as pd
-import numpy as np
-import traceback
-
-@app.get("/model/predict/date/{date}")
-def predict_date(date: str):
-    try:
-        df = predict_for_date(date)
-
-        # ─────────────────────────────
-        # EMPTY CASE
-        # ─────────────────────────────
-        if df is None or len(df) == 0:
-            return {
-                "status": "no_data",
-                "date": date,
-                "data": []
-            }
-
-        df = df.copy()
-
-        # ─────────────────────────────
-        # FIX TYPES (CRITICAL)
-        # ─────────────────────────────
-        for col in df.columns:
-
-            if pd.api.types.is_integer_dtype(df[col]):
-                df[col] = df[col].astype(int)
-
-            elif pd.api.types.is_float_dtype(df[col]):
-                df[col] = df[col].astype(float)
-
-            elif pd.api.types.is_datetime64_any_dtype(df[col]):
-                df[col] = df[col].astype(str)
-
-        # ─────────────────────────────
-        # FINAL OUTPUT
-        # ─────────────────────────────
-        result = df.to_dict(orient="records")
-
-        return {
-            "status": "ok",
-            "data": result
-        }
-
-    except Exception as e:
-        print("🔥 PREDICT ERROR:", str(e))
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
-
-# ------------------------------------------------------------------------------
-# QA (SAFE FALLBACK)
-# ------------------------------------------------------------------------------
-@app.get("/qa")
-def qa(q: str):
-    return {
-        "answer": "Q&A engine not ready yet",
-        "matches": []
-    }
-
-# ------------------------------------------------------------------------------
-# STOCKS (MOCK SAFE)
+# STOCKS
 # ------------------------------------------------------------------------------
 @app.get("/stocks")
 def stocks(index: str = "sp500", days: int = 30):
@@ -296,31 +194,12 @@ def stocks(index: str = "sp500", days: int = 30):
     except Exception as e:
         return {"error": str(e)}
 
-from fastapi import APIRouter, Query
-from backend_database.data_api import TrumpDataClient
-
-router = APIRouter()
-client = TrumpDataClient()
-
-@router.get("/categories")
-def get_categories(
-    period: str = Query("year"),
-    date_from: str = Query(None),
-    date_to: str = Query(None),
-):
-    try:
-        df = client.get_category_ratio(start=date_from, end=date_to)
-
-        # 🔥 FORMATAR PRO FRONTEND
-        result = [
-            {
-                "category": row["category"],
-                "count": float(row["ratio_pct"])  # frontend espera "count"
-            }
-            for _, row in df.iterrows()
-        ]
-
-        return result
-
-    except Exception as e:
-        return {"error": str(e)}
+# ------------------------------------------------------------------------------
+# QA
+# ------------------------------------------------------------------------------
+@app.get("/qa")
+def qa(q: str):
+    return {
+        "answer": "Q&A not implemented",
+        "matches": []
+    }
