@@ -10,17 +10,34 @@ from groq import Groq
 from backend_database.data_api import TrumpDataClient
 from backend.model_predict import predict_for_date
 from backend.model_training import load_posts
-from datasets import load_dataset
+
+import pickle
+from huggingface_hub import hf_hub_download
 
 # 🔥 SIMPLE EMBEDDING (NO TORCH)
 def simple_embed(text: str):
     return np.random.rand(384)
 
-# 🔥 Load HF dataset (your embeddings)
-dataset = load_dataset("Rogersurf/trump-pulse-embeddings", split="train")
+# 🔥 LOAD PICKLE FROM HF (CORRECT WAY)
+try:
+    file_path = hf_hub_download(
+        repo_id="Rogersurf/trump-pulse-embeddings",
+        filename="trump_embeddings.pkl"
+    )
 
-texts = dataset["text"]
-embeddings = np.vstack(dataset["embedding"])
+    with open(file_path, "rb") as f:
+        data = pickle.load(f)
+
+    texts = data["text"]
+    embeddings = np.array(data["embedding"])
+
+    print(f"✅ EMBEDDINGS LOADED: {len(texts)}")
+
+except Exception as e:
+    print("🔥 FAILED TO LOAD EMBEDDINGS:", e)
+
+    texts = ["fallback"]
+    embeddings = np.random.rand(1, 384)
 
 # 🔥 Groq client
 groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
