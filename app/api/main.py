@@ -30,18 +30,24 @@ try:
 
     texts = data["text"]
     embeddings = np.array(data["embedding"])
+    
+    with open(file_path, "rb") as f:
+        data = pickle.load(f)
 
-    print(f"✅ EMBEDDINGS LOADED: {len(texts)}")
-    print("----- DEBUG EMBEDDINGS -----")
-    print("texts type:", type(texts))
-    print("embeddings type:", type(embeddings))
+        print("🔥 DATA TYPE:", type(data))
+        print("🔥 DATA KEYS:", data.keys() if isinstance(data, dict) else "NOT A DICT")
 
-    print("len(texts):", len(texts))
-    print("embeddings shape:", embeddings.shape)
+        print(f"✅ EMBEDDINGS LOADED: {len(texts)}")
+        print("----- DEBUG EMBEDDINGS -----")
+        print("texts type:", type(texts))
+        print("embeddings type:", type(embeddings))
 
-    print("sample text:", texts[0][:200] if len(texts) > 0 else "EMPTY")
-    print("sample embedding (first 5 values):", embeddings[0][:5] if len(embeddings) > 0 else "EMPTY")
-    print("----------------------------")
+        print("len(texts):", len(texts))
+        print("embeddings shape:", embeddings.shape)
+
+        print("sample text:", texts[0][:200] if len(texts) > 0 else "EMPTY")
+        print("sample embedding (first 5 values):", embeddings[0][:5] if len(embeddings) > 0 else "EMPTY")
+        print("----------------------------")
 
 except Exception as e:
     print("🔥 FAILED TO LOAD EMBEDDINGS:", e)
