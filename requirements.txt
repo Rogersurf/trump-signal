@@ -4,8 +4,6 @@ uvicorn
 pandas
 numpy<2.0
 
-sentence-transformers
-
 scikit-learn
 xgboost
 
@@ -21,3 +19,5 @@ apscheduler
 websockets
 
 groq
+datasets
+sentence-transformers
