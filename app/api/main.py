@@ -15,7 +15,7 @@ import pickle
 from huggingface_hub import hf_hub_download
 
 # ------------------------------------------------------------------------------
-# 🔥 LOAD EMBEDDINGS FROM HF (FIXED)
+# 🔥 LOAD EMBEDDINGS FROM HF (DEBUG VERSION — CORRECT)
 # ------------------------------------------------------------------------------
 try:
     file_path = hf_hub_download(
@@ -25,29 +25,41 @@ try:
         token=os.environ.get("HF_TOKEN")
     )
 
+    print("FILE PATH:", file_path)
+    print("FILE EXISTS:", os.path.exists(file_path))
+
     with open(file_path, "rb") as f:
         data = pickle.load(f)
 
-    texts = data["text"]
-    embeddings = np.array(data["embedding"])
-    
-    with open(file_path, "rb") as f:
-        data = pickle.load(f)
+    # 🔥 DEBUG FIRST (BEFORE ACCESSING KEYS)
+    print("🔥 DATA TYPE:", type(data))
 
-        print("🔥 DATA TYPE:", type(data))
-        print("🔥 DATA KEYS:", data.keys() if isinstance(data, dict) else "NOT A DICT")
+    if isinstance(data, dict):
+        print("🔥 DATA KEYS:", data.keys())
+    else:
+        print("🔥 NOT A DICT — STRUCTURE:", data)
 
-        print(f"✅ EMBEDDINGS LOADED: {len(texts)}")
-        print("----- DEBUG EMBEDDINGS -----")
-        print("texts type:", type(texts))
-        print("embeddings type:", type(embeddings))
+    # 🔥 SAFE EXTRACTION (NO CRASH)
+    if isinstance(data, dict):
+        texts = data.get("text") or data.get("texts") or data.get("posts")
+        embeddings = data.get("embedding") or data.get("embeddings") or data.get("vectors")
+    else:
+        raise ValueError("Pickle is not a dict")
 
-        print("len(texts):", len(texts))
-        print("embeddings shape:", embeddings.shape)
+    if texts is None or embeddings is None:
+        raise ValueError("Could not find text/embedding keys in dataset")
 
-        print("sample text:", texts[0][:200] if len(texts) > 0 else "EMPTY")
-        print("sample embedding (first 5 values):", embeddings[0][:5] if len(embeddings) > 0 else "EMPTY")
-        print("----------------------------")
+    embeddings = np.array(embeddings)
+
+    print("✅ EMBEDDINGS LOADED:", len(texts))
+    print("SHAPE:", embeddings.shape)
+    print("SAMPLE TEXT:", texts[0][:100])
+
+except Exception as e:
+    print("🔥 FAILED TO LOAD EMBEDDINGS:", e)
+
+    texts = ["fallback"]
+    embeddings = np.random.rand(1, 384)
 
 except Exception as e:
     print("🔥 FAILED TO LOAD EMBEDDINGS:", e)
