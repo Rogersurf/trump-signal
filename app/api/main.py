@@ -211,14 +211,56 @@ def gdelt_timeseries(weeks: int = 8):
 # ------------------------------------------------------------------------------
 # MODEL
 # ------------------------------------------------------------------------------
+from fastapi import HTTPException
+import pandas as pd
+import numpy as np
+import traceback
+
 @app.get("/model/predict/date/{date}")
 def predict_date(date: str):
     try:
-        return predict_for_date(date)
+        df = predict_for_date(date)
+
+        # ─────────────────────────────
+        # EMPTY CASE
+        # ─────────────────────────────
+        if df is None or len(df) == 0:
+            return {
+                "status": "no_data",
+                "date": date,
+                "data": []
+            }
+
+        df = df.copy()
+
+        # ─────────────────────────────
+        # FIX TYPES (CRITICAL)
+        # ─────────────────────────────
+        for col in df.columns:
+
+            if pd.api.types.is_integer_dtype(df[col]):
+                df[col] = df[col].astype(int)
+
+            elif pd.api.types.is_float_dtype(df[col]):
+                df[col] = df[col].astype(float)
+
+            elif pd.api.types.is_datetime64_any_dtype(df[col]):
+                df[col] = df[col].astype(str)
+
+        # ─────────────────────────────
+        # FINAL OUTPUT
+        # ─────────────────────────────
+        result = df.to_dict(orient="records")
+
+        return {
+            "status": "ok",
+            "data": result
+        }
+
     except Exception as e:
         print("🔥 PREDICT ERROR:", str(e))
         traceback.print_exc()
-        return {"error": str(e)}
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ------------------------------------------------------------------------------
 # QA (SAFE FALLBACK)
