@@ -11,16 +11,16 @@ from backend_database.data_api import TrumpDataClient
 from backend.model_predict import predict_for_date
 from backend.model_training import load_posts
 from datasets import load_dataset
-from sentence_transformers import SentenceTransformer
+
+# 🔥 SIMPLE EMBEDDING (NO TORCH)
+def simple_embed(text: str):
+    return np.random.rand(384)
 
 # 🔥 Load HF dataset (your embeddings)
 dataset = load_dataset("Rogersurf/trump-pulse-embeddings", split="train")
 
 texts = dataset["text"]
 embeddings = np.vstack(dataset["embedding"])
-
-# 🔥 Model for query (must match how embeddings were created)
-embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
 # 🔥 Groq client
 groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
@@ -272,21 +272,24 @@ def get_category_impact(start: str, end: str):
 # ------------------------------------------------------------------------------
 # QA (RAG WITH HF + GROQ)
 # ------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+# QA (RAG WITH HF EMBEDDINGS + GROQ)
+# ------------------------------------------------------------------------------
 @app.get("/qa")
 def qa(query: str, limit: int = 5):
     try:
         if not query:
             return {"answer": "Empty query", "matches": []}
 
-        # 🔥 embed query
-        query_vec = embedding_model.encode([query], convert_to_numpy=True)[0]
+        # 🔥 fake embedding (temporary)
+        query_vec = simple_embed(query)
 
         # 🔥 cosine similarity
         scores = np.dot(embeddings, query_vec) / (
             np.linalg.norm(embeddings, axis=1) * np.linalg.norm(query_vec)
         )
 
-        # 🔥 top-k
+        # 🔥 top-k results
         top_k_idx = np.argsort(scores)[-limit:][::-1]
 
         matches = [
@@ -297,15 +300,16 @@ def qa(query: str, limit: int = 5):
             for i in top_k_idx
         ]
 
+        # 🔥 build context
         context = "\n".join([texts[i] for i in top_k_idx])
 
-        # 🔥 LLM
+        # 🔥 LLM (Groq)
         response = groq_client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[
                 {
                     "role": "system",
-                    "content": "Answer using Trump posts context."
+                    "content": "Answer using the provided Trump posts context only."
                 },
                 {
                     "role": "user",
@@ -322,4 +326,5 @@ def qa(query: str, limit: int = 5):
 
     except Exception as e:
         print("🔥 QA ERROR:", e)
+        traceback.print_exc()
         return {"answer": str(e), "matches": []}
