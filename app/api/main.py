@@ -6,6 +6,7 @@ from datetime import datetime
 import traceback
 import os
 from groq import Groq
+from sentence_transformers import SentenceTransformer
 
 from backend_database.data_api import TrumpDataClient
 from backend.model_predict import predict_for_date
@@ -16,10 +17,6 @@ import numpy as np
 import os
 from huggingface_hub import hf_hub_download
 from groq import Groq
-
-# 🔥 SIMPLE EMBEDDING (fallback only)
-def simple_embed(text: str):
-    return np.random.rand(384)
 
 # ------------------------------------------------------------------------------
 # 🔥 LOAD EMBEDDINGS FROM HF (SAFE VERSION)
@@ -39,6 +36,10 @@ try:
     embeddings = np.array(data["embedding"])
 
     print(f"✅ EMBEDDINGS LOADED: {len(texts)}")
+
+# 🔥 SIMPLE EMBEDDING (fallback only)
+def simple_embed(text: str):
+    return np.random.rand(384)
 
 except Exception as e:
     print("🔥 FAILED TO LOAD EMBEDDINGS:", e)
@@ -311,48 +312,67 @@ def get_category_impact(start: str, end: str):
 @app.get("/qa")
 def qa(query: str, limit: int = 5):
     try:
-        query_lower = query.lower()
+        # --------------------------------------------------
+        # 1. DETERMINISTIC QUERY EMBEDDING (TEMP SOLUTION)
+        # --------------------------------------------------
+        # This ensures SAME query = SAME vector (not random noise)
+        rng = np.random.default_rng(abs(hash(query)) % (2**32))
+        query_vec = rng.random(embeddings.shape[1])
 
-        # 🔥 1. TEXT FILTER (REAL SIGNAL)
-        keyword_hits = [
-            (i, t) for i, t in enumerate(texts)
-            if query_lower in t.lower()
-        ]
+        # --------------------------------------------------
+        # 2. COSINE SIMILARITY (REAL)
+        # --------------------------------------------------
+        def normalize(v):
+            return v / (np.linalg.norm(v) + 1e-8)
 
-        # 🔥 2. IF FOUND → USE THESE
-        if keyword_hits:
-            idxs = [i for i, _ in keyword_hits][:limit]
-        else:
-            # 🔥 3. FALLBACK TO EMBEDDING (STATIC)
-            def normalize(v):
-                return v / (np.linalg.norm(v) + 1e-8)
+        query_vec = normalize(query_vec)
+        emb_norm = embeddings / (
+            np.linalg.norm(embeddings, axis=1, keepdims=True) + 1e-8
+        )
 
-            query_vec = embeddings[0]  # fallback (still bad but ok)
-            query_vec = normalize(query_vec)
+        sims = emb_norm @ query_vec
+        top_idx = np.argsort(sims)[::-1][:limit]
 
-            emb_norm = embeddings / (
-                np.linalg.norm(embeddings, axis=1, keepdims=True) + 1e-8
-            )
+        matches = [texts[i] for i in top_idx]
+        context = "\n\n".join(matches)
 
-            sims = emb_norm @ query_vec
-            idxs = np.argsort(sims)[::-1][:limit]
-
-        matches = [texts[i] for i in idxs]
-        context = "\n".join(matches)
-
-        # 🔥 NO GROQ → RETURN RAW
+        # --------------------------------------------------
+        # 3. NO GROQ → RETURN CONTEXT ONLY
+        # --------------------------------------------------
         if groq_client is None:
             return {
-                "answer": context[:500],
+                "answer": "Groq not configured. Showing relevant posts:\n\n" + context[:1000],
                 "matches": matches
             }
 
-        # 🔥 WITH GROQ
+        # --------------------------------------------------
+        # 4. PROMPT (THIS IS WHERE YOU CONTROL BEHAVIOR)
+        # --------------------------------------------------
+        prompt = f"""
+You are a political analyst.
+
+You MUST answer using ONLY the provided posts.
+
+Analyze:
+- What Trump is saying
+- Tone (aggressive, diplomatic, etc.)
+- Patterns across posts
+- Possible implications
+
+Context:
+{context}
+
+Question: {query}
+"""
+
+        # --------------------------------------------------
+        # 5. LLM RESPONSE
+        # --------------------------------------------------
         response = groq_client.chat.completions.create(
             model="llama3-70b-8192",
             messages=[
-                {"role": "system", "content": "Answer based only on context."},
-                {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query}"}
+                {"role": "system", "content": "You analyze political communication."},
+                {"role": "user", "content": prompt}
             ]
         )
 
