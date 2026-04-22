@@ -19,3 +19,5 @@ huggingface_hub
 
 apscheduler
 websockets
+
+groq
