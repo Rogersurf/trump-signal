@@ -199,35 +199,35 @@ def stocks(index: str = "sp500", days: int = 30):
 # QA
 # ------------------------------------------------------------------------------
 @app.get("/qa")
-def qa(q: str):
+def qa(query: str, limit: int = 5):
     try:
-        if not q or len(q.strip()) == 0:
+        if not query or len(query.strip()) == 0:
             return {
                 "answer": "Please ask a question.",
                 "matches": []
             }
 
-        # 🔥 LOAD REAL DATA (THIS IS STEP 4)
+        # Load data
         client = TrumpDataClient(DB_PATH)
         df = client.get_full_data()
 
         if df is None or df.empty:
             context_data = "No data available."
         else:
-            df = df.tail(50)  # last 50 posts only (safe)
+            df = df.tail(limit * 10)  # small optimization
             context_data = "\n".join(df["text"].astype(str).tolist())
 
-        # 🔥 LLM CALL WITH CONTEXT
+        # LLM call
         response = groq_client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[
                 {
                     "role": "system",
-                    "content": "Answer based on Trump Truth Social posts and their market/geopolitical impact."
+                    "content": "Answer based on Trump Truth Social posts and their geopolitical/market impact."
                 },
                 {
                     "role": "user",
-                    "content": f"Context:\n{context_data}\n\nQuestion:\n{q}"
+                    "content": f"Context:\n{context_data}\n\nQuestion:\n{query}"
                 }
             ],
             temperature=0.3
@@ -237,7 +237,7 @@ def qa(q: str):
 
         return {
             "answer": answer,
-            "matches": []
+            "matches": []  # later: return top-k posts
         }
 
     except Exception as e:
