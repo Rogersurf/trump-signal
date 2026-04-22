@@ -203,3 +203,60 @@ def qa(q: str):
         "answer": "Q&A not implemented",
         "matches": []
     }
+    
+@app.get("/categories/impact")
+def get_category_impact(start: str, end: str):
+    try:
+        df, cat_cols, _ = load_posts()
+
+        start = pd.to_datetime(start)
+        end = pd.to_datetime(end)
+
+        df = df[(df["date"] >= start) & (df["date"] <= end)].copy()
+
+        if df.empty:
+            print("⚠️ NO DATA IN DATE RANGE")
+            return []
+
+        # 🔥 CREATE IMPACT
+        if "sp500_close" not in df.columns or "sp500_open" not in df.columns:
+            print("⚠️ MISSING MARKET COLUMNS")
+            return []
+
+        df["impact"] = (df["sp500_close"] - df["sp500_open"]).fillna(0)
+
+        # 🔥 FIX: force numeric
+        df[cat_cols] = df[cat_cols].apply(pd.to_numeric, errors="coerce").fillna(0)
+
+        # 🔥 REMOVE rows with no category signal
+        df = df[df[cat_cols].sum(axis=1) > 0]
+
+        if df.empty:
+            print("⚠️ ALL CATEGORY VALUES ZERO")
+            return []
+
+        results = []
+
+        # 🔥 FIX: weighted average instead of threshold
+        for cat in cat_cols:
+
+            weight = df[cat]
+
+            if weight.sum() == 0:
+                continue
+
+            avg_impact = (df["impact"] * weight).sum() / weight.sum()
+
+            results.append({
+                "category": cat.replace("cat_", ""),
+                "avg_impact": float(round(avg_impact, 6))
+            })
+
+        print("✅ CATEGORY IMPACT:", results[:3])
+
+        return results
+
+    except Exception as e:
+        print("🔥 CATEGORY IMPACT ERROR:", e)
+        traceback.print_exc()
+        return {"error": str(e)}
