@@ -116,7 +116,14 @@ def predict_for_date(target_date: str) -> pd.DataFrame:
     raw, _, _ = load_posts()
 
     target = pd.Timestamp(target_date).normalize()
-    day_posts = raw[raw["date"].dt.normalize() == target].copy()
+
+    # 🔥 USE CONTEXT WINDOW (30 DAYS BACK)
+    window_start = target - pd.Timedelta(days=30)
+
+    day_posts = raw[
+        (raw["date"].dt.normalize() >= window_start) &
+        (raw["date"].dt.normalize() <= target)
+    ].copy()
 
     if day_posts.empty:
         raise ValueError(f"No posts for {target_date}")
