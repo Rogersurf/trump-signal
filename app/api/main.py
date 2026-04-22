@@ -67,16 +67,6 @@ except Exception as e:
     texts = ["fallback"]
     embeddings = np.random.rand(1, 384)
 
-# ------------------------------------------------------------------------------
-# 🔥 EMBEDDING MODEL (SAFE ADD — THIS WAS MISSING)
-# ------------------------------------------------------------------------------
-try:
-    from sentence_transformers import SentenceTransformer
-    embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
-    print("✅ EMBEDDING MODEL LOADED")
-except Exception as e:
-    print("🔥 EMBEDDING MODEL FAILED:", e)
-    embedding_model = None
 
 # ------------------------------------------------------------------------------
 # 🔥 GROQ (SAFE INIT — FIXED)
@@ -259,46 +249,44 @@ def get_category_impact(start: str, end: str):
 @app.get("/qa")
 def qa(query: str, limit: int = 5):
     try:
-        # 🔥 REAL embedding if possible
-        if embedding_model is None:
-            return {
-                "answer": "Embedding model not available. Semantic search disabled.",
-                "matches": []
-            }
+        # --------------------------------------------------
+        # 1. FAKE QUERY VECTOR (DEBUG MODE)
+        # --------------------------------------------------
+        query_vec = embeddings[0]  # 🔥 só pra testar retrieval
 
-        query_vec = embedding_model.encode(query)
-
+        # --------------------------------------------------
+        # 2. NORMALIZAÇÃO (OBRIGATÓRIO)
+        # --------------------------------------------------
         def normalize(v):
             return v / (np.linalg.norm(v) + 1e-8)
 
         query_vec = normalize(query_vec)
+
         emb_norm = embeddings / (
             np.linalg.norm(embeddings, axis=1, keepdims=True) + 1e-8
         )
 
+        # --------------------------------------------------
+        # 3. COSINE SIMILARITY
+        # --------------------------------------------------
         sims = emb_norm @ query_vec
+
+        # --------------------------------------------------
+        # 4. TOP RESULTS
+        # --------------------------------------------------
         top_idx = np.argsort(sims)[::-1][:limit]
 
         matches = [texts[i] for i in top_idx]
-        context = "\n\n".join(matches)
 
-        if groq_client is None:
-            return {
-                "answer": context[:1000],
-                "matches": matches
-            }
-
-        response = groq_client.chat.completions.create(
-            model="llama3-70b-8192",
-            messages=[
-                {"role": "system", "content": "Analyze political posts."},
-                {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query}"}
-            ]
-        )
+        # --------------------------------------------------
+        # 5. DEBUG OUTPUT (IMPORTANTE)
+        # --------------------------------------------------
+        print("TOP IDX:", top_idx)
+        print("TOP SCORES:", sims[top_idx])
 
         return {
-            "answer": response.choices[0].message.content,
-            "matches": matches
+            "matches": matches,
+            "scores": sims[top_idx].tolist()
         }
 
     except Exception as e:
