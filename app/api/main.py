@@ -41,8 +41,11 @@ try:
 
     # 🔥 SAFE EXTRACTION (NO CRASH)
     if isinstance(data, dict):
-        texts = data.get("text") or data.get("texts") or data.get("posts")
-        embeddings = data.get("embedding") or data.get("embeddings") or data.get("vectors")
+        texts = data["posts"]
+        embeddings = np.array(data["embeddings"])
+
+        print("LEN TEXTS:", len(texts))
+        print("EMB SHAPE:", embeddings.shape)
     else:
         raise ValueError("Pickle is not a dict")
 
