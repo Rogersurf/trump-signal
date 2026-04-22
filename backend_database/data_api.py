@@ -840,6 +840,15 @@ class TrumpDataClient:
             raise ValueError(f"No GDELT trend data found between {start} and {end}")
 
         return df
+    
+
+def get_category_summary(self, date_from=None, date_to=None):
+    df = self.get_category_ratio(start=date_from, end=date_to)
+
+    # 🔥 Convert ratio → fake count (for UI compatibility)
+    df["count"] = (df["ratio_pct"] * df["total_posts"]).astype(int)
+
+    return df[["category", "count"]]
 
 if __name__ == '__main__':
     client = TrumpDataClient()

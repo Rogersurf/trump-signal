@@ -86,7 +86,11 @@ def get_posts(start_date: str = None, end_date: str = None):
 def categories(date_from: str = None, date_to: str = None):
     try:
         client = TrumpDataClient(DB_PATH)
-        df = client.get_full_data(date_from=date_from, date_to=date_to)
+        df = client.get_full_data(
+            date_from=date_from,
+            date_to=date_to,
+            market_hours_only=False
+        )
 
         if df is None or df.empty:
             return []
