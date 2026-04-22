@@ -10,6 +10,20 @@ from groq import Groq
 from backend_database.data_api import TrumpDataClient
 from backend.model_predict import predict_for_date
 from backend.model_training import load_posts
+from datasets import load_dataset
+from sentence_transformers import SentenceTransformer
+
+# 🔥 Load HF dataset (your embeddings)
+dataset = load_dataset("Rogersurf/trump-pulse-embeddings", split="train")
+
+texts = dataset["text"]
+embeddings = np.vstack(dataset["embedding"])
+
+# 🔥 Model for query (must match how embeddings were created)
+embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+
+# 🔥 Groq client
+groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
 app = FastAPI()
 
@@ -198,55 +212,6 @@ def stocks(index: str = "sp500", days: int = 30):
 # ------------------------------------------------------------------------------
 # QA
 # ------------------------------------------------------------------------------
-@app.get("/qa")
-def qa(query: str, limit: int = 5):
-    try:
-        if not query or len(query.strip()) == 0:
-            return {
-                "answer": "Please ask a question.",
-                "matches": []
-            }
-
-        # Load data
-        client = TrumpDataClient(DB_PATH)
-        df = client.get_full_data()
-
-        if df is None or df.empty:
-            context_data = "No data available."
-        else:
-            df = df.tail(limit * 10)  # small optimization
-            context_data = "\n".join(df["text"].astype(str).tolist())
-
-        # LLM call
-        response = groq_client.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "Answer based on Trump Truth Social posts and their geopolitical/market impact."
-                },
-                {
-                    "role": "user",
-                    "content": f"Context:\n{context_data}\n\nQuestion:\n{query}"
-                }
-            ],
-            temperature=0.3
-        )
-
-        answer = response.choices[0].message.content
-
-        return {
-            "answer": answer,
-            "matches": []  # later: return top-k posts
-        }
-
-    except Exception as e:
-        print("🔥 QA ERROR:", str(e))
-        return {
-            "answer": f"Error: {str(e)}",
-            "matches": []
-        }
-    
 @app.get("/categories/impact")
 def get_category_impact(start: str, end: str):
     try:
@@ -303,3 +268,58 @@ def get_category_impact(start: str, end: str):
         print("🔥 CATEGORY IMPACT ERROR:", e)
         traceback.print_exc()
         return {"error": str(e)}
+    
+# ------------------------------------------------------------------------------
+# QA (RAG WITH HF + GROQ)
+# ------------------------------------------------------------------------------
+@app.get("/qa")
+def qa(query: str, limit: int = 5):
+    try:
+        if not query:
+            return {"answer": "Empty query", "matches": []}
+
+        # 🔥 embed query
+        query_vec = embedding_model.encode([query], convert_to_numpy=True)[0]
+
+        # 🔥 cosine similarity
+        scores = np.dot(embeddings, query_vec) / (
+            np.linalg.norm(embeddings, axis=1) * np.linalg.norm(query_vec)
+        )
+
+        # 🔥 top-k
+        top_k_idx = np.argsort(scores)[-limit:][::-1]
+
+        matches = [
+            {
+                "text": texts[i],
+                "score": float(scores[i])
+            }
+            for i in top_k_idx
+        ]
+
+        context = "\n".join([texts[i] for i in top_k_idx])
+
+        # 🔥 LLM
+        response = groq_client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Answer using Trump posts context."
+                },
+                {
+                    "role": "user",
+                    "content": f"Context:\n{context}\n\nQuestion:\n{query}"
+                }
+            ],
+            temperature=0.3
+        )
+
+        return {
+            "answer": response.choices[0].message.content,
+            "matches": matches
+        }
+
+    except Exception as e:
+        print("🔥 QA ERROR:", e)
+        return {"answer": str(e), "matches": []}
