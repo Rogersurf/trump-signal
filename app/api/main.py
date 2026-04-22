@@ -5,6 +5,7 @@ import numpy as np
 from datetime import datetime
 import traceback
 import os
+from groq import Groq
 
 from backend_database.data_api import TrumpDataClient
 from backend.model_predict import predict_for_date
@@ -199,10 +200,52 @@ def stocks(index: str = "sp500", days: int = 30):
 # ------------------------------------------------------------------------------
 @app.get("/qa")
 def qa(q: str):
-    return {
-        "answer": "Q&A not implemented",
-        "matches": []
-    }
+    try:
+        if not q or len(q.strip()) == 0:
+            return {
+                "answer": "Please ask a question.",
+                "matches": []
+            }
+
+        # 🔥 LOAD REAL DATA (THIS IS STEP 4)
+        client = TrumpDataClient(DB_PATH)
+        df = client.get_full_data()
+
+        if df is None or df.empty:
+            context_data = "No data available."
+        else:
+            df = df.tail(50)  # last 50 posts only (safe)
+            context_data = "\n".join(df["text"].astype(str).tolist())
+
+        # 🔥 LLM CALL WITH CONTEXT
+        response = groq_client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Answer based on Trump Truth Social posts and their market/geopolitical impact."
+                },
+                {
+                    "role": "user",
+                    "content": f"Context:\n{context_data}\n\nQuestion:\n{q}"
+                }
+            ],
+            temperature=0.3
+        )
+
+        answer = response.choices[0].message.content
+
+        return {
+            "answer": answer,
+            "matches": []
+        }
+
+    except Exception as e:
+        print("🔥 QA ERROR:", str(e))
+        return {
+            "answer": f"Error: {str(e)}",
+            "matches": []
+        }
     
 @app.get("/categories/impact")
 def get_category_impact(start: str, end: str):
