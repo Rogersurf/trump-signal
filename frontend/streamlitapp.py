@@ -146,19 +146,20 @@ tabs = [
     T["qa"],
 ]
 
-# Initialize state
-if "active_tab" not in st.session_state:
-    st.session_state["active_tab"] = T["daily_feed"]
+# Safe default (NO crash anymore)
+default_tab = st.session_state.get("active_tab", T["daily_feed"])
 
-# Top navigation (stable)
+if default_tab not in tabs:
+    default_tab = T["daily_feed"]
+
 selected_tab = st.radio(
-    "",
+    "Navigation",
     tabs,
-    index=tabs.index(st.session_state["active_tab"]),
+    index=tabs.index(default_tab),
     horizontal=True,
+    label_visibility="collapsed",
 )
 
-# Persist selection
 st.session_state["active_tab"] = selected_tab
 
 st.divider()
