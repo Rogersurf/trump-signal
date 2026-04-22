@@ -308,59 +308,38 @@ def get_category_impact(start: str, end: str):
 # ------------------------------------------------------------------------------
 # QA (RAG WITH HF + GROQ)
 # ------------------------------------------------------------------------------
-# ------------------------------------------------------------------------------
-# QA (RAG WITH HF EMBEDDINGS + GROQ)
-# ------------------------------------------------------------------------------
 @app.get("/qa")
 def qa(query: str, limit: int = 5):
     try:
-        if not query:
-            return {"answer": "Empty query", "matches": []}
+        # 🔥 EMBEDDING SEARCH (mesmo fake por enquanto)
+        query_vec = embeddings[0]
 
-        # 🔥 fake embedding (temporary)
-        query_vec = simple_embed(query)
+        sims = np.dot(embeddings, query_vec)
+        top_idx = np.argsort(sims)[-limit:][::-1]
 
-        # 🔥 cosine similarity
-        scores = np.dot(embeddings, query_vec) / (
-            np.linalg.norm(embeddings, axis=1) * np.linalg.norm(query_vec)
-        )
+        context = "\n".join([texts[i] for i in top_idx])
 
-        # 🔥 top-k results
-        top_k_idx = np.argsort(scores)[-limit:][::-1]
-
-        matches = [
-            {
-                "text": texts[i],
-                "score": float(scores[i])
+        # 🔥 SE NÃO TEM GROQ → RETORNA CONTEXTO DIRETO
+        if groq_client is None:
+            return {
+                "answer": context[:500],
+                "matches": [texts[i] for i in top_idx]
             }
-            for i in top_k_idx
-        ]
 
-        # 🔥 build context
-        context = "\n".join([texts[i] for i in top_k_idx])
-
-        # 🔥 LLM (Groq)
+        # 🔥 SE TEM GROQ → USA LLM
         response = groq_client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model="llama3-70b-8192",
             messages=[
-                {
-                    "role": "system",
-                    "content": "Answer using the provided Trump posts context only."
-                },
-                {
-                    "role": "user",
-                    "content": f"Context:\n{context}\n\nQuestion:\n{query}"
-                }
-            ],
-            temperature=0.3
+                {"role": "system", "content": "Answer based only on context."},
+                {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query}"}
+            ]
         )
 
         return {
             "answer": response.choices[0].message.content,
-            "matches": matches
+            "matches": [texts[i] for i in top_idx]
         }
 
     except Exception as e:
         print("🔥 QA ERROR:", e)
-        traceback.print_exc()
-        return {"answer": str(e), "matches": []}
+        return {"error": str(e)}
