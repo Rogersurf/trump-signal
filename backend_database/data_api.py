@@ -7,43 +7,12 @@ import datetime
 import os
 from backend_database.init_db import DEFAULT_DB_PATH
 
-import os
-
-def get_db_path():
-    """
-    Single source of truth for database path.
-    Priority:
-    1. HF / Docker env
-    2. Local fallback
-    """
-    base = os.environ.get("TRUMPPULSE_DATA_DIR")
-
-    if base:
-        return os.path.join(base, "trump_data.db")
-
-    return os.path.abspath("trump_data.db")
-
-
-def get_db_path():
-    base = os.environ.get("TRUMPPULSE_DATA_DIR")
-
-    if base:
-        path = os.path.join(base, "trump_data.db")
-    else:
-        path = os.path.abspath("backend_database/trump_data.db")
-
-    print(f"[DB DEBUG] Using DB_PATH: {path}")  # 🔥 debug real
-
-    return path
-
-
-DB_PATH = get_db_path()
-
 class TrumpDataClient:
-    def __init__(self, db_path=DEFAULT_DB_PATH):
-        self.db_path = db_path
+    def __init__(self, db_path=None):
+        self.db_path = db_path or DEFAULT_DB_PATH
 
     def _get_conn(self):
+        print(f"[DB DEBUG] Using DB_PATH: {self.db_path}")  # 🔥 IMPORTANTE
         return sqlite3.connect(self.db_path)
 
     # ── Raw / Full ────────────────────────────

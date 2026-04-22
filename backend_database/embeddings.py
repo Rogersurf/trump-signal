@@ -112,13 +112,6 @@ class PostSearchEngine:
     # Build index (MANUAL ONLY)
     # -------------------------
     def build_index(self, force: bool = False):
-        """
-        Build embeddings from database.
-
-        IMPORTANT:
-        - NEVER runs automatically
-        - ONLY for offline usage
-        """
 
         if not force:
             print("[Embeddings] build_index skipped (force=False).")
@@ -133,31 +126,30 @@ class PostSearchEngine:
             raise ValueError("Database path required to build index.")
 
         conn = sqlite3.connect(self.db_path)
+
         df = pd.read_sql(
-            "SELECT post_id, date, text FROM truth_social WHERE text IS NOT NULL",
+            "SELECT * FROM truth_social WHERE text IS NOT NULL",
             conn
         )
+
         conn.close()
 
-        self.posts = [
-            {"post_id": row.post_id, "date": row.date, "text": row.text}
-            for row in df.itertuples()
-        ]
-
-        texts = [p["text"] for p in self.posts]
+        self.posts = df.to_dict(orient="records")
+        texts = df["text"].fillna("").tolist()
 
         print(f"[Embeddings] Generating embeddings for {len(texts)} posts...")
 
         model = self._get_model()
         self.embeddings = model.encode(texts, show_progress_bar=True)
 
+        import os
         os.makedirs(os.path.dirname(CACHE_PATH), exist_ok=True)
 
         with open(CACHE_PATH, "wb") as f:
-            pickle.dump(
-                {"posts": self.posts, "embeddings": self.embeddings},
-                f
-            )
+            pickle.dump({
+                "posts": self.posts,
+                "embeddings": self.embeddings
+            }, f)
 
         print(f"[Embeddings] Cache saved to {CACHE_PATH}")
 

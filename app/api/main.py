@@ -263,6 +263,7 @@ def qa(query: str, limit: int = 5):
         conn = sqlite3.connect(DB_PATH)
 
         enriched = []
+        context_parts = []
 
         for r in results:
             post = r["post"]
@@ -297,10 +298,56 @@ def qa(query: str, limit: int = 5):
                 "score": r["score"]
             })
 
+            # 🔥 BUILD CONTEXT FOR LLM
+            text = post.get("text", "")
+            date = post.get("date", "")
+            context_parts.append(f"[{date}] {text}")
+
         conn.close()
+
+        context = "\n".join(context_parts[:limit])
+
+        # -------------------------
+        # 🔥 LLM PART (GROQ)
+        # -------------------------
+        if groq_client is None:
+            return {
+                "query": query,
+                "answer": "LLM not available. Showing top posts only.",
+                "results": enriched
+            }
+
+        response = groq_client.chat.completions.create(
+            model="llama3-70b-8192",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a political and financial analyst."
+                },
+                {
+                    "role": "user",
+                    "content": f"""
+Context:
+{context}
+
+Question:
+{query}
+
+Instructions:
+- Answer the question
+- Explain the main theme of the posts
+- Highlight any market or geopolitical signals
+- Be concise
+"""
+                }
+            ]
+        )
+
+        answer = response.choices[0].message.content
 
         return {
             "query": query,
+            "answer": answer,
             "results": enriched
         }
 
