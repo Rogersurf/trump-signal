@@ -311,22 +311,43 @@ def get_category_impact(start: str, end: str):
 @app.get("/qa")
 def qa(query: str, limit: int = 5):
     try:
-        # 🔥 EMBEDDING SEARCH (mesmo fake por enquanto)
-        query_vec = embeddings[0]
+        query_lower = query.lower()
 
-        sims = np.dot(embeddings, query_vec)
-        top_idx = np.argsort(sims)[-limit:][::-1]
+        # 🔥 1. TEXT FILTER (REAL SIGNAL)
+        keyword_hits = [
+            (i, t) for i, t in enumerate(texts)
+            if query_lower in t.lower()
+        ]
 
-        context = "\n".join([texts[i] for i in top_idx])
+        # 🔥 2. IF FOUND → USE THESE
+        if keyword_hits:
+            idxs = [i for i, _ in keyword_hits][:limit]
+        else:
+            # 🔥 3. FALLBACK TO EMBEDDING (STATIC)
+            def normalize(v):
+                return v / (np.linalg.norm(v) + 1e-8)
 
-        # 🔥 SE NÃO TEM GROQ → RETORNA CONTEXTO DIRETO
+            query_vec = embeddings[0]  # fallback (still bad but ok)
+            query_vec = normalize(query_vec)
+
+            emb_norm = embeddings / (
+                np.linalg.norm(embeddings, axis=1, keepdims=True) + 1e-8
+            )
+
+            sims = emb_norm @ query_vec
+            idxs = np.argsort(sims)[::-1][:limit]
+
+        matches = [texts[i] for i in idxs]
+        context = "\n".join(matches)
+
+        # 🔥 NO GROQ → RETURN RAW
         if groq_client is None:
             return {
                 "answer": context[:500],
-                "matches": [texts[i] for i in top_idx]
+                "matches": matches
             }
 
-        # 🔥 SE TEM GROQ → USA LLM
+        # 🔥 WITH GROQ
         response = groq_client.chat.completions.create(
             model="llama3-70b-8192",
             messages=[
@@ -337,7 +358,7 @@ def qa(query: str, limit: int = 5):
 
         return {
             "answer": response.choices[0].message.content,
-            "matches": [texts[i] for i in top_idx]
+            "matches": matches
         }
 
     except Exception as e:
