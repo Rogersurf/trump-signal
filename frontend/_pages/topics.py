@@ -2,7 +2,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from datetime import date, timedelta
+from datetime import date
 from frontend._data.api_client import get_category_summary
 from frontend.config import CATEGORY_COLORS
 
@@ -102,6 +102,3 @@ def render(T: dict):
             mime="text/csv",
             use_container_width=True,
         )
-
-# Prevent any weird rerun side-effects
-st.session_state["active_tab"] = "Topics"
