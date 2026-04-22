@@ -102,3 +102,6 @@ def render(T: dict):
             mime="text/csv",
             use_container_width=True,
         )
+
+# Prevent any weird rerun side-effects
+st.session_state["active_tab"] = "Topics"

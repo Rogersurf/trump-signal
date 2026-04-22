@@ -134,31 +134,53 @@ if dashboard == T["nav_user"]:
     st.title(T["app_title"])
     st.caption(T["tagline"])
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        T["daily_feed"],
-        T["topics"],
-        T["market"],
-        T["geo"],
-        T["qa"],
-    ])
+    # -----------------------------------------------------------------------------
+# STATE-CONTROLLED NAVIGATION (NO TAB RESET BUG)
+# -----------------------------------------------------------------------------
 
-    # -------------------------------------------------------------------------
-    # TABS
-    # -------------------------------------------------------------------------
-    with tab1:
-        feed.render(T, tz_offset)
+tabs = [
+    T["daily_feed"],
+    T["topics"],
+    T["market"],
+    T["geo"],
+    T["qa"],
+]
 
-    with tab2:
-        topics.render(T)
+# Initialize state
+if "active_tab" not in st.session_state:
+    st.session_state["active_tab"] = T["daily_feed"]
 
-    with tab3:
-        market.render(T)
+# Top navigation (stable)
+selected_tab = st.radio(
+    "",
+    tabs,
+    index=tabs.index(st.session_state["active_tab"]),
+    horizontal=True,
+)
 
-    with tab4:
-        geo.render(T)
+# Persist selection
+st.session_state["active_tab"] = selected_tab
 
-    with tab5:
-        qa.render(T)
+st.divider()
+
+# -----------------------------------------------------------------------------
+# RENDER LOGIC
+# -----------------------------------------------------------------------------
+
+if selected_tab == T["daily_feed"]:
+    feed.render(T, tz_offset)
+
+elif selected_tab == T["topics"]:
+    topics.render(T)
+
+elif selected_tab == T["market"]:
+    market.render(T)
+
+elif selected_tab == T["geo"]:
+    geo.render(T)
+
+elif selected_tab == T["qa"]:
+    qa.render(T)
 
 else:
     dev.render(T)
