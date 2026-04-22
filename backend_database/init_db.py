@@ -1,9 +1,8 @@
 import os
 import json
-import requests
+import shutil
 from datetime import datetime
 from huggingface_hub import hf_hub_download, upload_file
-import shutil
 
 # ==============================
 # LOAD CONFIG
@@ -17,26 +16,60 @@ print("CONFIG_PATH:", CONFIG_PATH)
 with open(CONFIG_PATH) as f:
     config = json.load(f)
 
-HF_DB_REPO = config["hf_db_repo"].replace("https://huggingface.co/datasets/", "")
-HF_RAW_DATA = config["hf_raw_data"]
+HF_DB_REPO = config["hf_db_repo"].replace(
+    "https://huggingface.co/datasets/", ""
+)
 
-# ==============================
-# FILE NAMING (NO HARDCODE VERSION)
-# ==============================
 HF_FILENAME_LATEST = "trump_data_latest.db"
 
+
+# ==============================
+# PATH RESOLUTION (SAFE & DYNAMIC)
+# ==============================
+def resolve_db_path():
+    """
+    Single source of truth for DB path.
+    Works for:
+    - HF Spaces
+    - Local dev
+    """
+
+    # 1️⃣ Priority: explicit env
+    env_path = os.environ.get("DB_PATH")
+    if env_path:
+        print(f"[DB INIT] Using DB_PATH from env: {env_path}")
+        return env_path
+
+    # 2️⃣ HF / Docker persistent volume
+    data_dir = os.environ.get("TRUMPPULSE_DATA_DIR")
+    if data_dir:
+        path = os.path.join(data_dir, "trump_data.db")
+        print(f"[DB INIT] Using TRUMPPULSE_DATA_DIR: {path}")
+        return path
+
+    # 3️⃣ Local fallback
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    path = os.path.join(base_dir, "trump_data.db")
+    print(f"[DB INIT] Using local fallback: {path}")
+    return path
+
+
+DB_PATH = os.path.abspath(resolve_db_path())
+
+# ensure directory exists
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+
+DEFAULT_DB_PATH = DB_PATH
+
+print(f"[DB INIT] FINAL DB_PATH: {DEFAULT_DB_PATH}")
+
+
+# ==============================
+# FILE NAMING
+# ==============================
 def generate_versioned_filename():
     timestamp = datetime.utcnow().strftime("%Y-%m-%d_%H-%M-%S")
     return f"trump_data_{timestamp}.db"
-
-# ==============================
-# PATHS
-# ==============================
-LOCAL_DB_DIR = os.environ.get("TRUMPPULSE_DATA_DIR", ".")
-os.makedirs(LOCAL_DB_DIR, exist_ok=True)
-
-DB_PATH = os.path.join(LOCAL_DB_DIR, "trump_data.db")
-DEFAULT_DB_PATH = os.path.abspath(DB_PATH)
 
 
 # ==============================
@@ -45,25 +78,29 @@ DEFAULT_DB_PATH = os.path.abspath(DB_PATH)
 def download_from_hf():
     try:
         print("📥 Trying HF latest DB...")
+
         file_path = hf_hub_download(
             repo_id=HF_DB_REPO,
             filename=HF_FILENAME_LATEST,
             repo_type="dataset"
         )
-        shutil.copy(file_path, DB_PATH)
+
+        shutil.copy(file_path, DEFAULT_DB_PATH)
+
         print("✅ Loaded DB from HF (latest)")
         return True
+
     except Exception as e:
         print("⚠️ HF download failed:", e)
         return False
 
 
 # ==============================
-# DOWNLOAD FROM CHRISSORIA
+# DOWNLOAD FROM SOURCE DATASET
 # ==============================
 def download_from_chrissoria():
     try:
-        print("📥 Downloading dataset from chrissoria (HF API)...")
+        print("📥 Downloading dataset from chrissoria...")
 
         file_path = hf_hub_download(
             repo_id="chrissoria/trump-truth-social",
@@ -71,30 +108,24 @@ def download_from_chrissoria():
             repo_type="dataset"
         )
 
-        print(f"✅ Downloaded: {file_path}")
-
         import pandas as pd
         import sqlite3
 
         df = pd.read_parquet(file_path)
 
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(DEFAULT_DB_PATH)
         df.to_sql("truth_social", conn, if_exists="replace", index=False)
         conn.close()
 
         print("✅ DB created from dataset")
 
     except Exception as e:
-        print("❌ Failed:", e)
-        raise
-
-    except Exception as e:
-        print("❌ Failed to process chrissoria data:", e)
+        print("❌ Failed to build DB:", e)
         raise
 
 
 # ==============================
-# UPLOAD TO HF (VERSIONED + LATEST)
+# UPLOAD TO HF
 # ==============================
 def upload_to_hf():
     try:
@@ -102,17 +133,15 @@ def upload_to_hf():
 
         versioned_name = generate_versioned_filename()
 
-        # Upload versioned file
         upload_file(
-            path_or_fileobj=DB_PATH,
+            path_or_fileobj=DEFAULT_DB_PATH,
             path_in_repo=versioned_name,
             repo_id=HF_DB_REPO,
             repo_type="dataset"
         )
 
-        # Upload latest (overwrite)
         upload_file(
-            path_or_fileobj=DB_PATH,
+            path_or_fileobj=DEFAULT_DB_PATH,
             path_in_repo=HF_FILENAME_LATEST,
             repo_id=HF_DB_REPO,
             repo_type="dataset"
@@ -125,27 +154,28 @@ def upload_to_hf():
 
 
 # ==============================
-# INIT DB (MAIN ENTRYPOINT)
+# INIT DB
 # ==============================
 def init_db():
     print("🚀 Initializing database...")
 
-    # 1. Already exists locally
-    if os.path.exists(DB_PATH):
+    # 1️⃣ already exists
+    if os.path.exists(DEFAULT_DB_PATH):
         print("✅ Using local DB")
-        return DB_PATH
+        return DEFAULT_DB_PATH
 
-    # 2. Try HF
+    # 2️⃣ try HF
     if download_from_hf():
-        return DB_PATH
+        return DEFAULT_DB_PATH
 
-    # 3. Fallback → chrissoria
+    # 3️⃣ fallback → build
     download_from_chrissoria()
 
-    # 4. Upload to YOUR HF
+    # 4️⃣ upload
     upload_to_hf()
 
-    return DB_PATH
+    return DEFAULT_DB_PATH
+
 
 if __name__ == "__main__":
     path = init_db()
