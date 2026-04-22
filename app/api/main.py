@@ -12,17 +12,24 @@ from backend.model_predict import predict_for_date
 from backend.model_training import load_posts
 
 import pickle
+import numpy as np
+import os
 from huggingface_hub import hf_hub_download
+from groq import Groq
 
-# 🔥 SIMPLE EMBEDDING (NO TORCH)
+# 🔥 SIMPLE EMBEDDING (fallback only)
 def simple_embed(text: str):
     return np.random.rand(384)
 
-# 🔥 LOAD PICKLE FROM HF (CORRECT WAY)
+# ------------------------------------------------------------------------------
+# 🔥 LOAD EMBEDDINGS FROM HF (SAFE VERSION)
+# ------------------------------------------------------------------------------
 try:
     file_path = hf_hub_download(
         repo_id="Rogersurf/trump-pulse-embeddings",
-        filename="trump_embeddings.pkl"
+        filename="trump_embeddings.pkl",
+        repo_type="dataset",
+        token=os.environ.get("HF_TOKEN")  # 👈 important if private
     )
 
     with open(file_path, "rb") as f:
@@ -39,12 +46,24 @@ except Exception as e:
     texts = ["fallback"]
     embeddings = np.random.rand(1, 384)
 
-# 🔥 Groq client
-groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+# ------------------------------------------------------------------------------
+# 🔥 GROQ (SAFE INIT — NO CRASH)
+# ------------------------------------------------------------------------------
+groq_api_key = os.environ.get("GROQ_API_KEY")
 
+if groq_api_key:
+    groq_client = Groq(api_key=groq_api_key)
+    print("✅ GROQ CONNECTED")
+else:
+    groq_client = None
+    print("⚠️ GROQ NOT CONFIGURED")
+
+# ------------------------------------------------------------------------------
+# APP
+# ------------------------------------------------------------------------------
 app = FastAPI()
 
-DB_PATH = os.environ.get("DB_PATH", "/data/trump_pulse/trump_data.db")
+DB_PATH = os.environ.get("DB_PATH", "/data/trump_pulse/trump_data.db")ulse/trump_data.db")
 
 # ------------------------------------------------------------------------------
 # HEALTH
