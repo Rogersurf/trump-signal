@@ -257,9 +257,51 @@ def qa(query: str, limit: int = 5):
         engine = get_search_engine(DB_PATH)
         results = engine.search(query, top_k=limit)
 
+        import sqlite3
+        import pandas as pd
+
+        conn = sqlite3.connect(DB_PATH)
+
+        enriched = []
+
+        for r in results:
+            post = r["post"]
+            post_id = post.get("post_id")
+
+            try:
+                row = pd.read_sql(
+                    """
+                    SELECT 
+                        url,
+                        sp500_5min_before, sp500_5min_after,
+                        qqq_5min_before, qqq_5min_after,
+                        djt_5min_before, djt_5min_after,
+                        during_market_hours
+                    FROM truth_social
+                    WHERE post_id = ?
+                    LIMIT 1
+                    """,
+                    conn,
+                    params=[str(post_id)]
+                )
+
+                if not row.empty:
+                    extra = row.iloc[0].to_dict()
+                    post.update(extra)
+
+            except Exception as e:
+                print("ENRICH ERROR:", e)
+
+            enriched.append({
+                "post": post,
+                "score": r["score"]
+            })
+
+        conn.close()
+
         return {
             "query": query,
-            "results": results
+            "results": enriched
         }
 
     except Exception as e:
