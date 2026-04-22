@@ -63,7 +63,7 @@ else:
 # ------------------------------------------------------------------------------
 app = FastAPI()
 
-DB_PATH = os.environ.get("DB_PATH", "/data/trump_pulse/trump_data.db")ulse/trump_data.db")
+DB_PATH = os.environ.get("DB_PATH", "/data/trump_pulse/trump_data.db")
 
 # ------------------------------------------------------------------------------
 # HEALTH
