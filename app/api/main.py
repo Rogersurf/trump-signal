@@ -249,49 +249,18 @@ def get_category_impact(start: str, end: str):
 # ------------------------------------------------------------------------------
 # QA (FIXED — REAL EMBEDDING + SAFE FALLBACK)
 # ------------------------------------------------------------------------------
+from backend_database.embeddings import get_search_engine
+
 @app.get("/qa")
 def qa(query: str, limit: int = 5):
     try:
-        # --------------------------------------------------
-        # 1. FAKE QUERY VECTOR (DEBUG MODE)
-        # --------------------------------------------------
-        query_vec = embeddings[0]  # 🔥 só pra testar retrieval
-
-        # --------------------------------------------------
-        # 2. NORMALIZAÇÃO (OBRIGATÓRIO)
-        # --------------------------------------------------
-        def normalize(v):
-            return v / (np.linalg.norm(v) + 1e-8)
-
-        query_vec = normalize(query_vec)
-
-        emb_norm = embeddings / (
-            np.linalg.norm(embeddings, axis=1, keepdims=True) + 1e-8
-        )
-
-        # --------------------------------------------------
-        # 3. COSINE SIMILARITY
-        # --------------------------------------------------
-        sims = emb_norm @ query_vec
-
-        # --------------------------------------------------
-        # 4. TOP RESULTS
-        # --------------------------------------------------
-        top_idx = np.argsort(sims)[::-1][:limit]
-
-        matches = [texts[i] for i in top_idx]
-
-        # --------------------------------------------------
-        # 5. DEBUG OUTPUT (IMPORTANTE)
-        # --------------------------------------------------
-        print("TOP IDX:", top_idx)
-        print("TOP SCORES:", sims[top_idx])
+        engine = get_search_engine(DB_PATH)
+        results = engine.search(query, top_k=limit)
 
         return {
-            "matches": matches,
-            "scores": sims[top_idx].tolist()
+            "query": query,
+            "results": results
         }
 
     except Exception as e:
-        print("🔥 QA ERROR:", e)
         return {"error": str(e)}

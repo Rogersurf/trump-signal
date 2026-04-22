@@ -14,10 +14,12 @@ plotly
 matplotlib
 
 huggingface_hub
+datasets
 
 apscheduler
 websockets
 
-groq
-datasets
+torch>=2.4
 sentence-transformers
+
+groq
